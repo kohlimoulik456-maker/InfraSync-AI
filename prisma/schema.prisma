@@ -1,0 +1,170 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ─────────────────────────────────────────────
+// Core project
+// ─────────────────────────────────────────────
+model project {
+  projectId   String   @id @default(uuid())
+  projectName String
+  createdAt   DateTime @default(now())
+
+  activities        scheduleActivity[]
+  supervisorUpdates supervisorUpdate[]
+  lessonsLearned    lessonLearned[]
+  fundTransactions  fundTransaction[]
+}
+
+// ─────────────────────────────────────────────
+// Project fund ledger
+// ─────────────────────────────────────────────
+model fundTransaction {
+  transactionId   String   @id @default(uuid())
+  projectId       String
+  transactionType String   // RECEIPT | EXPENDITURE
+  amount          Float
+  transactionDate DateTime
+  description     String
+  category        String
+  manager         String
+  createdAt       DateTime @default(now())
+
+  project project @relation(fields: [projectId], references: [projectId], onDelete: Cascade)
+
+  @@index([projectId, transactionDate])
+}
+
+// ─────────────────────────────────────────────
+// Schedule activity (baseline schedule rows)
+// ─────────────────────────────────────────────
+model scheduleActivity {
+  activityId     String   @id @default(uuid())
+  projectId      String
+  activityName   String
+  discipline     String
+  area           String
+  contractor     String?
+  wbsL1          String?
+  wbsL2          String?
+  wbsL3          String?
+  wbsL4          String?
+  wbsL5          String?
+  wbsL6          String?
+  plannedStart   DateTime
+  plannedFinish  DateTime
+  plannedDuration Int?    // days (can be computed or stored)
+  activityStatus String   // COMPLETED | IN_PROGRESS | DELAYED | NOT_STARTED
+  predecessorId  String?
+  fieldKeywords  String?
+  normalizedSearchText String @default("")
+
+  project          project            @relation(fields: [projectId], references: [projectId], onDelete: Cascade)
+  actuals          activityActual[]
+  aiMatches        aiActivityMatch[]
+  supervisorUpdates supervisorUpdate[]
+  lessonsLearned   lessonLearned[]
+}
+
+// ─────────────────────────────────────────────
+// Verified field actuals per activity
+// ─────────────────────────────────────────────
+model activityActual {
+  id            String    @id @default(uuid())
+  activityId    String
+  updateId      String?
+  actualStart   DateTime?
+  actualFinish  DateTime?
+  actualDuration Int?
+  progressValue Float?    // 0-100
+  progressUnit  String?
+  delayDays     Int?
+  delayReason   String?
+  crewSize      Int?
+  supervisorObservation String?
+  verifiedBy    String?
+  verifiedAt    DateTime  @default(now())
+
+  activity scheduleActivity @relation(fields: [activityId], references: [activityId], onDelete: Cascade)
+  update   supervisorUpdate? @relation(fields: [updateId], references: [updateId], onDelete: Cascade)
+}
+
+// ─────────────────────────────────────────────
+// Supervisor field updates (voice / text / excel)
+// ─────────────────────────────────────────────
+model supervisorUpdate {
+  updateId             String   @id @default(uuid())
+  projectId            String
+  activityId           String?
+  supervisorId         String
+  updateDate           DateTime @default(now())
+  sourceType           String   @default("TEXT")
+  discipline           String?
+  areaUnit             String?
+  activityDescription  String
+  actualStartDate      DateTime?
+  actualFinishDate     DateTime?
+  progressValue        Float?
+  progressUnit         String?
+  delayReason          String?
+  remarks              String?
+  rawInput             String?
+  rawText              String?
+  createdAt            DateTime @default(now())
+
+  project  project           @relation(fields: [projectId], references: [projectId], onDelete: Cascade)
+  activity scheduleActivity? @relation(fields: [activityId], references: [activityId], onDelete: SetNull)
+  matches  aiActivityMatch[]
+  actuals  activityActual[]
+}
+
+// ─────────────────────────────────────────────
+// AI matching result per supervisor update
+// ─────────────────────────────────────────────
+model aiActivityMatch {
+  id                    String   @id @default(uuid())
+  updateId              String
+  activityId            String?
+  projectId             String?
+  overallConfidence     Float    @default(0)
+  semanticSimilarity    Float?   // Breakdown component: 40% weight
+  scheduleConsistency   Float?   // Breakdown component: 25% weight
+  contextMatch          Float?   // Breakdown component: 20% weight
+  ruleValidation        Float?   // Breakdown component: 15% weight
+  decision              String   // AUTO_ACCEPT | ACCEPT_MONITOR | FLAG_FOR_REVIEW | NO_MATCH | REJECTED
+  matchStatus           String   @default("PENDING") // PENDING | VALID | INVALID
+  createdAt             DateTime @default(now())
+
+  update   supervisorUpdate  @relation(fields: [updateId], references: [updateId], onDelete: Cascade)
+  activity scheduleActivity? @relation(fields: [activityId], references: [activityId], onDelete: SetNull)
+}
+
+// ─────────────────────────────────────────────
+// Institutional memory — approved lessons
+// ─────────────────────────────────────────────
+model lessonLearned {
+  lessonId        String   @id @default(uuid())
+  projectId       String
+  activityId      String?
+  discipline      String?
+  area            String?
+  contractor      String?
+  title           String
+  description     String?
+  delayReason     String?
+  actualDuration  Int?     // days
+  crewSize        Int?
+  observation     String?
+  lesson          String?
+  recommendation  String?
+  approved        Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  project  project           @relation(fields: [projectId], references: [projectId], onDelete: Cascade)
+  activity scheduleActivity? @relation(fields: [activityId], references: [activityId], onDelete: SetNull)
+}
