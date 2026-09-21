@@ -11,6 +11,11 @@ class ApiConfig {
     'INFRASYNC_API_BASE_URL',
     defaultValue: 'http://10.0.2.2:3000',
   );
+  static const String apiKey = String.fromEnvironment('INFRASYNC_API_KEY');
+
+  static Map<String, String> get headers => {
+        if (apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
+      };
 }
 
 class Project {
@@ -28,7 +33,7 @@ class Project {
 /// API keys (Gemini) stay server-side and are never embedded in this app.
 class ApiService {
   static Future<List<Project>> listProjects() async {
-    final res = await http.get(Uri.parse('${ApiConfig.baseUrl}/api/projects'));
+    final res = await http.get(Uri.parse('${ApiConfig.baseUrl}/api/projects'), headers: ApiConfig.headers);
     if (res.statusCode != 200) throw Exception('Failed to load projects');
     final data = jsonDecode(res.body);
     return (data['projects'] as List)
@@ -48,7 +53,7 @@ class ApiService {
   }) async {
     final res = await http.post(
       Uri.parse('${ApiConfig.baseUrl}/api/supervisor/text-update'),
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', ...ApiConfig.headers},
       body: jsonEncode({
         'project_id': projectId,
         'supervisor_id': supervisorId,
@@ -76,6 +81,7 @@ class ApiService {
       'POST',
       Uri.parse('${ApiConfig.baseUrl}/api/supervisor/excel-upload'),
     );
+    request.headers.addAll(ApiConfig.headers);
     request.fields['project_id'] = projectId;
     request.fields['supervisor_id'] = supervisorId;
     request.files.add(await http.MultipartFile.fromPath('file', file.path));

@@ -49,14 +49,29 @@ cp .env.example .env
 #   DATABASE_URL=postgresql://user:password@localhost:5432/infrasync
 #   GEMINI_API_KEY=            (leave blank to use Demo AI Mode)
 #   GEMINI_MODEL=gemini-1.5-flash
+#   AUTH_SECRET=               (long random secret used to sign sessions)
+#   AUTH_MANAGER_USERNAME=manager
+#   AUTH_MANAGER_PASSWORD=     (strong password)
+#   AUTH_SUPERVISOR_USERNAME=supervisor
+#   AUTH_SUPERVISOR_PASSWORD=  (strong password)
 
 npx prisma migrate dev --name init
 npm run seed
 npm run dev
 ```
 
-Open http://localhost:3000. The landing page has role cards for **Program Manager**
-and **Supervisor** (a simple demo role selector — no real auth in this MVP).
+Open http://localhost:3000/login and sign in with one of the configured accounts.
+Manager accounts can use project management, audit, and institutional-memory
+features. Supervisor accounts can submit field updates. All API routes require
+an authenticated session.
+
+For the Flutter client, configure the optional bearer token in `.env` with
+`AUTH_API_KEY`, then run:
+
+```bash
+flutter run --dart-define=INFRASYNC_API_BASE_URL=http://10.0.2.2:3000 \
+  --dart-define=INFRASYNC_API_KEY=your-api-key
+```
 
 ## 3. Demo AI Mode vs live Gemini
 
