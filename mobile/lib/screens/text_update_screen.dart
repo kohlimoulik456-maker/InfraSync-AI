@@ -26,6 +26,15 @@ class _TextUpdateScreenState extends State<TextUpdateScreen> {
 
   static const disciplines = ['CIVIL', 'PIPING', 'ELECTRICAL', 'INSTRUMENTATION', 'MECHANICAL', 'HSE'];
 
+  @override
+  void dispose() {
+    _areaController.dispose();
+    _textController.dispose();
+    _delayController.dispose();
+    _remarksController.dispose();
+    super.dispose();
+  }
+
   Future<void> _submit() async {
     if (_textController.text.trim().isEmpty) {
       setState(() => _error = 'Please describe the activity/progress update.');
@@ -47,11 +56,11 @@ class _TextUpdateScreenState extends State<TextUpdateScreen> {
         delayReason: _delayController.text.trim().isEmpty ? null : _delayController.text.trim(),
         remarks: _remarksController.text.trim().isEmpty ? null : _remarksController.text.trim(),
       );
-      setState(() => _result = data);
+      if (mounted) setState(() => _result = data);
     } catch (e) {
-      setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
     } finally {
-      setState(() => _submitting = false);
+      if (mounted) setState(() => _submitting = false);
     }
   }
 
@@ -91,7 +100,7 @@ class _TextUpdateScreenState extends State<TextUpdateScreen> {
         const Text('Discipline', style: TextStyle(fontWeight: FontWeight.w600)),
         const SizedBox(height: 6),
         DropdownButtonFormField<String>(
-          value: _discipline,
+          initialValue: _discipline,
           items: disciplines.map((d) => DropdownMenuItem(value: d, child: Text(d))).toList(),
           onChanged: (v) => setState(() => _discipline = v),
           decoration: const InputDecoration(hintText: 'Select…'),
@@ -141,13 +150,12 @@ class _TextUpdateScreenState extends State<TextUpdateScreen> {
       children: [
         if (r['demoMode'] == true) const _Chip(text: 'Demo AI Mode', color: Color(0xFFC97A0C)),
         const SizedBox(height: 8),
-        Row(children: [
+        Wrap(spacing: 6, runSpacing: 6, children: [
           _Chip(text: r['matchStatus'], color: _statusColor(r['matchStatus'])),
-          const SizedBox(width: 6),
           _Chip(text: r['decision'], color: _statusColor(r['decision'])),
         ]),
         const SizedBox(height: 16),
-        _DetailRow(label: 'Update ID', value: r['updateId']),
+        _DetailRow(label: 'Update ID', value: '${r['updateId'] ?? '—'}'),
         _DetailBlock(label: 'Original Input', value: _textController.text),
         const SizedBox(height: 8),
         const Text('Candidate Matches', style: TextStyle(fontWeight: FontWeight.w600)),
@@ -162,8 +170,8 @@ class _TextUpdateScreenState extends State<TextUpdateScreen> {
               ),
             )),
         const SizedBox(height: 12),
-        _DetailRow(label: 'Confidence Score', value: '${confidence['overall_score']}%'),
-        _DetailBlock(label: 'Audit Reason', value: r['reason']),
+        _DetailRow(label: 'Confidence Score', value: '${confidence is Map ? confidence['overall_score'] ?? '—' : '—'}%'),
+        _DetailBlock(label: 'Audit Reason', value: '${r['reason'] ?? 'No audit reason returned.'}'),
         _DetailBlock(
           label: 'Outcome',
           value: (r['decision'] == 'AUTO_ACCEPT' || r['decision'] == 'ACCEPT_MONITOR')
@@ -198,7 +206,7 @@ class _Chip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(20)),
+      decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
       child: Text(text.replaceAll('_', ' '), style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600)),
     );
   }

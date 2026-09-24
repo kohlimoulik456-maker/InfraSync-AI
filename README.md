@@ -47,6 +47,7 @@ npm install
 cp .env.example .env
 # edit .env:
 #   DATABASE_URL=postgresql://user:password@localhost:5432/infrasync
+#   DIRECT_URL=postgresql://user:password@localhost:5432/infrasync
 #   GEMINI_API_KEY=            (leave blank to use Demo AI Mode)
 #   GEMINI_MODEL=gemini-1.5-flash
 #   AUTH_SECRET=               (long random secret used to sign sessions)
@@ -58,6 +59,23 @@ cp .env.example .env
 npx prisma migrate dev --name init
 npm run seed
 npm run dev
+```
+
+### Supabase Postgres
+
+The app uses Prisma for all database access, so Supabase connects as the hosted
+PostgreSQL database without changing the application queries. In the Supabase
+dashboard, open **Connect** and copy:
+
+- The **Transaction Pooler** URL into `DATABASE_URL` for the running app.
+- The **Direct connection** URL into `DIRECT_URL` for Prisma migrations.
+
+Keep both values only in `.env` or your deployment secret manager. Never commit
+them to GitHub. After setting them, run:
+
+```bash
+npx prisma migrate deploy
+npm run seed
 ```
 
 Open http://localhost:3000/login and sign in with one of the configured accounts.

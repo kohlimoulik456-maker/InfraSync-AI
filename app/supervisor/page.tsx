@@ -69,7 +69,7 @@ export default function SupervisorEntryPage() {
         </div>
 
         <div className="mb-3 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-500">
-          Current prototype supports Text and Excel inputs. Voice transcription and scanned-diary OCR are planned for a future release.
+          Text, Excel, and Voice updates are active. Diary OCR remains a future enhancement.
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -95,10 +95,10 @@ export default function SupervisorEntryPage() {
             icon={<Mic size={22} />}
             title="Voice Update"
             description="Speak your update and let AI transcribe it."
-            badge="Coming Soon"
-            badgeTone="amber"
-            disabled={false}
-            onClick={() => setModal("voice")}
+            badge="Live"
+            badgeTone="teal"
+            disabled={!canProceed}
+            onClick={() => goTo("/supervisor/voice")}
           />
           <InputCard
             icon={<ScanLine size={22} />}
@@ -118,20 +118,6 @@ export default function SupervisorEntryPage() {
         )}
       </main>
 
-      <ComingSoonModal
-        open={modal === "voice"}
-        onClose={() => setModal(null)}
-        title="Voice Input Module — Coming Soon"
-        message="Voice-to-text processing will be available in the next release. For the current prototype, please submit your progress update using Text Update or Excel Upload."
-        onUseText={() => {
-          setModal(null);
-          goTo("/supervisor/text-update");
-        }}
-        onUseExcel={() => {
-          setModal(null);
-          goTo("/supervisor/excel-upload");
-        }}
-      />
       <ComingSoonModal
         open={modal === "diary"}
         onClose={() => setModal(null)}

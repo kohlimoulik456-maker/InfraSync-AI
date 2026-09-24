@@ -35,3 +35,77 @@ body {
 .label-field {
   @apply mb-1.5 block text-sm font-medium text-slate-700;
 }
+
+.intro-screen {
+  position: relative;
+  display: grid;
+  min-height: 100svh;
+  place-items: center;
+  overflow: hidden;
+  cursor: pointer;
+  background: #050505;
+  color: #f8fbff;
+}
+.intro-grid {
+  position: absolute;
+  inset: 0;
+  opacity: 0.3;
+  background-image: linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 52px 52px;
+  mask-image: linear-gradient(to bottom, transparent, black 35%, transparent);
+}
+.intro-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: min(90vw, 420px);
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  animation: intro-rise 900ms ease-out both;
+}
+.intro-logo-wrap {
+  position: relative;
+  display: grid;
+  height: 132px;
+  width: 132px;
+  place-items: center;
+  margin-bottom: 28px;
+}
+.intro-logo {
+  display: grid;
+  height: 72px;
+  width: 72px;
+  place-items: center;
+  border-radius: 6px;
+  background: #0f2a4a;
+  box-shadow: 0 0 36px rgba(255, 255, 255, 0.18);
+  color: white;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0;
+  animation: intro-pulse 2.2s ease-in-out infinite;
+}
+.intro-ring {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 50%;
+  animation: intro-orbit 4s linear infinite;
+}
+.intro-ring-one { height: 112px; width: 112px; }
+.intro-ring-two { height: 132px; width: 132px; border-color: rgba(255, 255, 255, 0.14); animation-direction: reverse; animation-duration: 6s; }
+.intro-kicker { margin: 0 0 12px; color: #bdbdbd; font-size: 10px; font-weight: 700; letter-spacing: 0.24em; }
+.intro-content h1 { margin: 0; font-size: clamp(2.4rem, 10vw, 4rem); font-weight: 700; letter-spacing: -0.04em; }
+.intro-content h1 span { color: #bdbdbd; }
+.intro-tagline { margin: 8px 0 34px; color: #a0a0a0; font-size: 14px; }
+.intro-loader { height: 3px; width: 180px; overflow: hidden; border-radius: 999px; background: rgba(255, 255, 255, 0.14); }
+.intro-loader-bar { height: 100%; width: 42%; border-radius: inherit; background: #fff; box-shadow: 0 0 14px rgba(255, 255, 255, 0.8); animation: intro-loading 2.4s ease-in-out infinite; }
+.intro-status { margin-top: 14px; color: #929292; font-size: 11px; letter-spacing: 0.08em; }
+@keyframes intro-rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes intro-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+@keyframes intro-orbit { from { transform: rotate(0deg) scale(1); } 50% { transform: rotate(180deg) scale(1.06); } to { transform: rotate(360deg) scale(1); } }
+@keyframes intro-loading { 0% { transform: translateX(-150%); } 55%, 100% { transform: translateX(430%); } }
+@media (prefers-reduced-motion: reduce) {
+  .intro-content, .intro-logo, .intro-ring, .intro-loader-bar { animation: none; }
+}

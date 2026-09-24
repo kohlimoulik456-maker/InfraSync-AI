@@ -24,16 +24,30 @@ class _SupervisorEntryScreenState extends State<SupervisorEntryScreen> {
     _loadProjects();
   }
 
+  @override
+  void dispose() {
+    _supervisorIdController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadProjects() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final projects = await ApiService.listProjects();
+      if (!mounted) return;
       setState(() {
         _projects = projects;
         _loading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
-        _error = 'Could not load projects. Check the API base URL and backend connection.';
+        _error = 'Could not load projects. Check the API URL and backend connection.';
         _loading = false;
       });
     }
@@ -70,7 +84,16 @@ class _SupervisorEntryScreenState extends State<SupervisorEntryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Supervisor')),
+      appBar: AppBar(
+        title: const Text('Field Updates'),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh projects',
+            onPressed: _loading ? null : _loadProjects,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
@@ -78,16 +101,13 @@ class _SupervisorEntryScreenState extends State<SupervisorEntryScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  const Text('Capture today\'s progress', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 4),
+                  const Text('Choose a project, then send a text update or upload a batch from site.',
+                      style: TextStyle(color: Color(0xFF4A5568))),
+                  const SizedBox(height: 18),
                   if (_error != null)
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      margin: const EdgeInsets.only(bottom: 12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFDECEC),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(_error!, style: const TextStyle(color: Color(0xFFB4232C))),
-                    ),
+                    _ErrorBanner(message: _error!, onRetry: _loadProjects),
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(16),
@@ -98,6 +118,8 @@ class _SupervisorEntryScreenState extends State<SupervisorEntryScreen> {
                           const SizedBox(height: 6),
                           TextField(
                             controller: _supervisorIdController,
+                            textInputAction: TextInputAction.next,
+                            textCapitalization: TextCapitalization.characters,
                             decoration: const InputDecoration(hintText: 'SUP-101'),
                             onChanged: (_) => setState(() {}),
                           ),
@@ -105,7 +127,7 @@ class _SupervisorEntryScreenState extends State<SupervisorEntryScreen> {
                           const Text('Project', style: TextStyle(fontWeight: FontWeight.w600)),
                           const SizedBox(height: 6),
                           DropdownButtonFormField<Project>(
-                            value: _selectedProject,
+                            initialValue: _selectedProject,
                             items: _projects
                                 .map((p) => DropdownMenuItem(
                                       value: p,
@@ -115,6 +137,10 @@ class _SupervisorEntryScreenState extends State<SupervisorEntryScreen> {
                             onChanged: (p) => setState(() => _selectedProject = p),
                             decoration: const InputDecoration(hintText: 'Select a project…'),
                           ),
+                          if (_selectedProject != null) ...[
+                            const SizedBox(height: 12),
+                            _ProjectSummary(project: _selectedProject!),
+                          ],
                         ],
                       ),
                     ),
@@ -128,8 +154,7 @@ class _SupervisorEntryScreenState extends State<SupervisorEntryScreen> {
                       border: Border.all(color: const Color(0xFFE7E9ED)),
                     ),
                     child: const Text(
-                      'Current prototype supports Text and Excel inputs. Voice transcription and '
-                      'scanned-diary OCR are planned for a future release.',
+                      'Text and Excel inputs are available now. Voice transcription and scanned-diary OCR are coming soon.',
                       style: TextStyle(fontSize: 12, color: Color(0xFF4A5568)),
                     ),
                   ),
@@ -246,7 +271,7 @@ class _InputCard extends StatelessWidget {
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                             decoration: BoxDecoration(
-                              color: badgeColor.withOpacity(0.12),
+                              color: badgeColor.withValues(alpha: 0.12),
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Text(badge, style: TextStyle(fontSize: 10, color: badgeColor, fontWeight: FontWeight.w600)),
@@ -262,6 +287,53 @@ class _InputCard extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ErrorBanner extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+
+  const _ErrorBanner({required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(color: const Color(0xFFFDECEC), borderRadius: BorderRadius.circular(10)),
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_off_outlined, color: Color(0xFFB4232C)),
+          const SizedBox(width: 10),
+          Expanded(child: Text(message, style: const TextStyle(color: Color(0xFFB4232C)))),
+          TextButton(onPressed: onRetry, child: const Text('Retry')),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProjectSummary extends StatelessWidget {
+  final Project project;
+
+  const _ProjectSummary({required this.project});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: const Color(0xFFEAF5F1), borderRadius: BorderRadius.circular(10)),
+      child: Row(
+        children: [
+          const Icon(Icons.analytics_outlined, color: Color(0xFF12866F)),
+          const SizedBox(width: 10),
+          Expanded(child: Text('${project.totalActivities} activities in this project')),
+          Text('${project.overallProgressPct.toStringAsFixed(0)}%',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Color(0xFF12866F))),
+        ],
       ),
     );
   }

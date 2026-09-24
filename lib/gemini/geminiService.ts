@@ -19,6 +19,30 @@ function getModel() {
   return client.getGenerativeModel({ model: modelName });
 }
 
+export async function transcribeAudio(audio: Buffer, mimeType: string): Promise<string> {
+  if (isDemoMode()) {
+    throw new Error("Audio transcription requires GEMINI_API_KEY. Type the transcript manually in Demo AI Mode.");
+  }
+
+  const model = getModel();
+  const result = await model.generateContent([
+    {
+      inlineData: {
+        data: audio.toString("base64"),
+        mimeType
+      }
+    },
+    "Transcribe this supervisor voice update exactly. Return only the spoken words as plain text, with no commentary."
+  ]);
+
+  const transcript = result.response.text().trim();
+  if (!transcript) {
+    throw new Error("No speech was detected in the recording.");
+  }
+
+  return transcript;
+}
+
 function emptyField() {
   return { value: null, evidence_text: null, evidence_status: "MISSING" as const };
 }

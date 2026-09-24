@@ -49,11 +49,11 @@ class _ExcelUploadScreenState extends State<ExcelUploadScreen> {
         supervisorId: widget.supervisorId,
         file: _file!,
       );
-      setState(() => _summary = data['summary']);
+      if (mounted) setState(() => _summary = data['summary'] as Map<String, dynamic>?);
     } catch (e) {
-      setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
     } finally {
-      setState(() => _submitting = false);
+      if (mounted) setState(() => _submitting = false);
     }
   }
 
@@ -118,8 +118,8 @@ class _ExcelUploadScreenState extends State<ExcelUploadScreen> {
                 ],
               ),
               const SizedBox(height: 16),
-              ...List.generate((_summary!['rows'] as List).length, (i) {
-                final row = (_summary!['rows'] as List)[i];
+              ...List.generate((_summary!['rows'] as List? ?? const []).length, (i) {
+                final row = ((_summary!['rows'] as List?) ?? const [])[i] as Map<String, dynamic>;
                 final result = row['result'];
                 return Card(
                   child: Padding(
@@ -132,11 +132,12 @@ class _ExcelUploadScreenState extends State<ExcelUploadScreen> {
                         const SizedBox(height: 4),
                         if (result != null)
                           Text(
-                            '${result['matchStatus']} · ${result['decision']} · ${result['confidence']['overall_score']}%',
+                            '${result['matchStatus']} · ${result['decision']} · ${(result['confidence'] as Map?)?['overall_score'] ?? '—'}%',
                             style: const TextStyle(fontSize: 12, color: Colors.grey),
                           )
                         else
-                          Text((row['errors'] as List).join(' · '), style: const TextStyle(fontSize: 12, color: Color(0xFFB4232C))),
+                            Text(((row['errors'] as List?) ?? const []).join(' · '),
+                              style: const TextStyle(fontSize: 12, color: Color(0xFFB4232C))),
                       ],
                     ),
                   ),

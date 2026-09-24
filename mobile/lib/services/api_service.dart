@@ -1,17 +1,24 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
 
 /// Points at the same Next.js backend and PostgreSQL database used by the
 /// web app. Set this to your deployed backend URL, e.g.
 /// https://infrasync.example.com or http://10.0.2.2:3000 for the Android
 /// emulator talking to a local dev server.
 class ApiConfig {
-  static const String baseUrl = String.fromEnvironment(
+  static const String _configuredBaseUrl = String.fromEnvironment(
     'INFRASYNC_API_BASE_URL',
     defaultValue: 'http://10.0.2.2:3000',
   );
-  static const String apiKey = String.fromEnvironment('INFRASYNC_API_KEY');
+  static const String baseUrl = kIsWeb && _configuredBaseUrl == 'http://10.0.2.2:3000'
+      ? 'http://localhost:3000'
+      : _configuredBaseUrl;
+  static const String apiKey = String.fromEnvironment(
+    'INFRASYNC_API_KEY',
+    defaultValue: 'local-dev-mobile-key',
+  );
 
   static Map<String, String> get headers => {
         if (apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
@@ -21,12 +28,44 @@ class ApiConfig {
 class Project {
   final String projectId;
   final String projectName;
-  Project({required this.projectId, required this.projectName});
+  final int totalActivities;
+  final double overallProgressPct;
+  final int pendingAiAuditReviews;
+
+  Project({
+    required this.projectId,
+    required this.projectName,
+    this.totalActivities = 0,
+    this.overallProgressPct = 0,
+    this.pendingAiAuditReviews = 0,
+  });
 
   factory Project.fromJson(Map<String, dynamic> json) => Project(
-        projectId: json['projectId'],
-        projectName: json['projectName'],
+        projectId: '${json['projectId'] ?? ''}',
+        projectName: '${json['projectName'] ?? 'Unnamed project'}',
+        totalActivities: _asInt(json['totalActivities']),
+        overallProgressPct: _asDouble(json['overallProgressPct']),
+        pendingAiAuditReviews: _asInt(json['pendingAiAuditReviews']),
       );
+}
+
+int _asInt(dynamic value) => value is num ? value.toInt() : int.tryParse('$value') ?? 0;
+
+double _asDouble(dynamic value) => value is num ? value.toDouble() : double.tryParse('$value') ?? 0;
+
+Map<String, dynamic> _decodeObject(String body) {
+  final decoded = jsonDecode(body);
+  if (decoded is Map<String, dynamic>) return decoded;
+  throw const FormatException('The server returned an invalid response.');
+}
+
+String _errorMessage(http.Response response, String fallback) {
+  try {
+    final data = _decodeObject(response.body);
+    return '${data['error'] ?? fallback}';
+  } catch (_) {
+    return fallback;
+  }
 }
 
 /// Thin REST client. Mirrors the same API routes the Next.js web app calls -
@@ -34,10 +73,11 @@ class Project {
 class ApiService {
   static Future<List<Project>> listProjects() async {
     final res = await http.get(Uri.parse('${ApiConfig.baseUrl}/api/projects'), headers: ApiConfig.headers);
-    if (res.statusCode != 200) throw Exception('Failed to load projects');
-    final data = jsonDecode(res.body);
+    if (res.statusCode != 200) throw Exception(_errorMessage(res, 'Failed to load projects.'));
+    final data = _decodeObject(res.body);
     return (data['projects'] as List)
-        .map((p) => Project(projectId: p['projectId'], projectName: p['projectName']))
+      .whereType<Map<String, dynamic>>()
+      .map(Project.fromJson)
         .toList();
   }
 
@@ -65,11 +105,10 @@ class ApiService {
         'remarks': remarks,
       }),
     );
-    final data = jsonDecode(res.body);
     if (res.statusCode != 200) {
-      throw Exception(data['error'] ?? 'Failed to process update');
+      throw Exception(_errorMessage(res, 'Failed to process update.'));
     }
-    return data;
+    return _decodeObject(res.body);
   }
 
   static Future<Map<String, dynamic>> uploadExcel({
@@ -88,11 +127,10 @@ class ApiService {
 
     final streamed = await request.send();
     final res = await http.Response.fromStream(streamed);
-    final data = jsonDecode(res.body);
     if (res.statusCode != 200) {
-      throw Exception(data['error'] ?? 'Failed to upload file');
+      throw Exception(_errorMessage(res, 'Failed to upload file.'));
     }
-    return data;
+    return _decodeObject(res.body);
   }
 
   /// Stub only - mirrors backend voiceProcessor.ts. Never sends audio,
