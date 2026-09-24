@@ -15,3 +15,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: err?.message || "Failed to query institutional memory." }, { status: 500 });
   }
 }
+export const dynamic = "force-dynamic";

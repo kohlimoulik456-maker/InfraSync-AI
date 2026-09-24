@@ -49,3 +49,4 @@ export async function GET(req: NextRequest, { params }: { params: { projectId: s
     fundTracing
   });
 }
+export const dynamic = "force-dynamic";

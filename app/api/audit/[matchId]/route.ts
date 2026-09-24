@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { applyVerifiedActual } from "@/lib/services/activityActualsService";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(req: NextRequest, { params }: { params: { matchId: string } }) {
   const match = await prisma.aiActivityMatch.findUnique({
     where: { id: params.matchId },

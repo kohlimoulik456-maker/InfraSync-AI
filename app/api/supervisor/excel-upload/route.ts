@@ -28,3 +28,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: err?.message || "Failed to process the uploaded file." }, { status: 500 });
   }
 }
+export const dynamic = "force-dynamic";

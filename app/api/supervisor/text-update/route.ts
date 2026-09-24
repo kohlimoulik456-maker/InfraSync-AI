@@ -30,3 +30,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: err?.message || "Failed to process text update." }, { status: 500 });
   }
 }
+export const dynamic = "force-dynamic";

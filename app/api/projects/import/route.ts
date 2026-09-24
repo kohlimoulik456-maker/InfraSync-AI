@@ -71,3 +71,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: err?.message || "Failed to import schedule." }, { status: 500 });
   }
 }
+export const dynamic = "force-dynamic";

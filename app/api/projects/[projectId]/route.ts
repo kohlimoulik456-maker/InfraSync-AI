@@ -12,3 +12,4 @@ export async function GET(req: NextRequest, { params }: { params: { projectId: s
 
   return NextResponse.json({ project, disciplines, areas, contractors, activityCount: activities.length });
 }
+export const dynamic = "force-dynamic";
