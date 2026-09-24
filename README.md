@@ -134,7 +134,24 @@ flutter pub get
 flutter run --dart-define=INFRASYNC_API_BASE_URL=http://10.0.2.2:3000
 ```
 
-## 6. MVP limitations (intentional)
+## 6. Deploying the web app
+
+The web app is a production Next.js application and can be deployed from this
+GitHub repository with Vercel:
+
+1. Import `kohlimoulik456-maker/InfraSync-AI` into Vercel.
+2. Set the framework preset to **Next.js**.
+3. Add the environment variables from `.env.example`, using the Supabase
+  `DATABASE_URL` and `DIRECT_URL` values.
+4. Add the Gemini and authentication variables from your local `.env`.
+5. Deploy.
+
+The web app includes an installable PWA manifest and a small offline shell. On
+supported browsers, use the browser's **Install app** action to install
+InfraSync-AI like a normal application. API requests remain online-only so
+cloud data is never silently written to a stale offline cache.
+
+## 7. MVP limitations (intentional)
 
 - **Voice Update** and **Scan Site Diary** are visible in both apps but show a
   "Coming Soon" dialog only — no microphone/camera access, no backend calls, no
@@ -152,7 +169,7 @@ flutter run --dart-define=INFRASYNC_API_BASE_URL=http://10.0.2.2:3000
   **manager-approved `lessons_learned`** — it is advisory-only and never
   auto-modifies an uploaded schedule.
 
-## 7. Key API routes
+## 8. Key API routes
 
 | Route | Purpose |
 |---|---|
@@ -170,7 +187,7 @@ flutter run --dart-define=INFRASYNC_API_BASE_URL=http://10.0.2.2:3000
 | `POST /api/institutional-memory/query` | Natural-language query over verified records |
 | `GET/POST /api/institutional-memory/lessons` | List/approve draft lessons |
 
-## 8. Confidence formula (backend-computed, never LLM-guessed)
+## 9. Confidence formula (backend-computed, never LLM-guessed)
 
 ```
 overall_confidence =
