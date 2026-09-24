@@ -94,3 +94,18 @@ npm run seed
 
 Then open the Program Manager page. The projects and dashboard records should
 come from Supabase instead of the local PostgreSQL server.
+
+## Recovering projects from the old local database
+
+The repository includes a safe Prisma transfer utility. It preserves project
+IDs and related activities, updates, actuals, AI matches, funds, and lessons,
+and skips records that already exist in Supabase.
+
+```bash
+SOURCE_DATABASE_URL="your-old-local-postgres-url" \
+TARGET_DATABASE_URL="$DATABASE_URL" \
+npm run migrate-local-to-supabase
+```
+
+This utility never deletes Supabase records. It copies the old local data into
+the hosted database, so both the old and new projects remain available.

@@ -12,7 +12,8 @@
     "seed": "tsx prisma/seed.ts",
     "demo-create": "tsx prisma/demo-create.ts",
     "demo-update": "tsx prisma/demo-update.ts",
-    "list-projects": "tsx prisma/list-projects.ts"
+    "list-projects": "tsx prisma/list-projects.ts",
+    "migrate-local-to-supabase": "tsx prisma/migrate-local-to-supabase.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.17.1",
