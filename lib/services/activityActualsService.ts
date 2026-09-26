@@ -8,6 +8,28 @@ function workStatusToActivityStatus(status: WorkStatus | null): "IN_PROGRESS" | 
   return null;
 }
 
+/**
+ * Infers activity status from fallback fields when no LLM extraction is available.
+ * Called when a manager approves from the audit queue (extraction = null).
+ *
+ * Rules (in priority order):
+ * 1. actualFinishDate set → COMPLETED
+ * 2. delayReason set → DELAYED
+ * 3. actualStartDate set OR progressValue > 0 → IN_PROGRESS
+ * 4. Otherwise → null (don't change existing status)
+ */
+function inferStatusFromFallback(fallback: {
+  actualStartDate: Date | null;
+  actualFinishDate: Date | null;
+  progressValue: number | null;
+  delayReason: string | null;
+}): "IN_PROGRESS" | "COMPLETED" | "DELAYED" | null {
+  if (fallback.actualFinishDate) return "COMPLETED";
+  if (fallback.delayReason) return "DELAYED";
+  if (fallback.actualStartDate || (fallback.progressValue != null && fallback.progressValue > 0)) return "IN_PROGRESS";
+  return null;
+}
+
 function daysBetween(a: Date, b: Date): number {
   return Math.round((a.getTime() - b.getTime()) / (1000 * 60 * 60 * 24));
 }
@@ -72,17 +94,22 @@ export async function applyVerifiedActual(params: {
     }
   });
 
-  const mappedStatus = workStatusToActivityStatus(
-    (params.extraction?.work_status.value as WorkStatus | undefined) ?? null
-  );
+  // Determine new activity status:
+  // - If LLM extraction has work_status → use that
+  // - Else infer from fallback fields (actualFinish, delayReason, actualStart, progressValue)
+  const mappedStatus = params.extraction
+    ? workStatusToActivityStatus((params.extraction.work_status.value as WorkStatus | undefined) ?? null)
+    : inferStatusFromFallback({
+        actualStartDate: actualStart ?? null,
+        actualFinishDate: actualFinish ?? null,
+        progressValue: progressValue ?? null,
+        delayReason: delayReason ?? null,
+      });
 
   if (mappedStatus) {
     await prisma.scheduleActivity.update({
       where: { activityId: params.activityId },
-      data: {
-        activityStatus: mappedStatus,
-        ...(actualStart ? {} : {})
-      }
+      data: { activityStatus: mappedStatus }
     });
   }
 
@@ -97,7 +124,7 @@ export async function applyVerifiedActual(params: {
       data: {
         projectId: activity.projectId,
         activityId: activity.activityId,
-          title: activity.activityName,
+        title: activity.activityName,
         discipline: activity.discipline,
         area: activity.area,
         contractor: activity.contractor,

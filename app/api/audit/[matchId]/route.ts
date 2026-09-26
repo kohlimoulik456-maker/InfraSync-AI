@@ -20,7 +20,6 @@ export async function POST(req: NextRequest, { params }: { params: { matchId: st
     const body = await req.json();
     const action: ManagerAction = body.action;
     const reviewedBy: string = body.reviewed_by || "Program Manager";
-    const overrideReason: string | undefined = body.override_reason;
     const selectedActivityId: string | undefined = body.selected_activity_id;
 
     const match = await prisma.aiActivityMatch.findUnique({
@@ -29,6 +28,16 @@ export async function POST(req: NextRequest, { params }: { params: { matchId: st
     });
     if (!match) return NextResponse.json({ error: "Audit record not found." }, { status: 404 });
 
+    // Build fallback from the real supervisorUpdate fields (they exist in schema)
+    const fallback = {
+      actualStartDate: match.update.actualStartDate ?? null,
+      actualFinishDate: match.update.actualFinishDate ?? null,
+      progressValue: match.update.progressValue ?? null,
+      progressUnit: match.update.progressUnit ?? null,
+      delayReason: match.update.delayReason ?? null,
+      remarks: match.update.remarks ?? match.update.activityDescription ?? null,
+    };
+
     if (action === "APPROVE") {
       if (!match.activityId) {
         return NextResponse.json({ error: "No suggested activity to approve on this record." }, { status: 400 });
@@ -36,26 +45,23 @@ export async function POST(req: NextRequest, { params }: { params: { matchId: st
       await applyVerifiedActual({
         activityId: match.activityId,
         updateId: match.updateId,
-        extraction: null, // llmExtractionJson doesn't exist in schema
-        fallback: {
-          actualStartDate: null, // these fields don't exist on supervisorUpdate
-          actualFinishDate: null,
-          progressValue: null,
-          progressUnit: null,
-          delayReason: null,
-          remarks: match.update.activityDescription
-        },
+        extraction: null,
+        fallback,
         verifiedBy: reviewedBy
       });
       await prisma.aiActivityMatch.update({
         where: { id: params.matchId },
-        data: { matchStatus: "VALID" } // reviewedAt/reviewedBy don't exist
+        data: {
+          matchStatus: "VALID",
+          reviewedBy,
+          reviewedAt: new Date()
+        }
       });
+
     } else if (action === "SELECT_DIFFERENT") {
       if (!selectedActivityId) {
         return NextResponse.json({ error: "selected_activity_id is required." }, { status: 400 });
       }
-      // Only allow selecting activities from the same Project_ID.
       const activity = await prisma.scheduleActivity.findUnique({ where: { activityId: selectedActivityId } });
       if (!activity || activity.projectId !== match.projectId) {
         return NextResponse.json({ error: "Selected activity does not belong to this project." }, { status: 400 });
@@ -64,36 +70,41 @@ export async function POST(req: NextRequest, { params }: { params: { matchId: st
         activityId: selectedActivityId,
         updateId: match.updateId,
         extraction: null,
-        fallback: {
-          actualStartDate: null,
-          actualFinishDate: null,
-          progressValue: null,
-          progressUnit: null,
-          delayReason: null,
-          remarks: match.update.activityDescription
-        },
+        fallback,
         verifiedBy: reviewedBy
       });
       await prisma.aiActivityMatch.update({
         where: { id: params.matchId },
         data: {
           activityId: selectedActivityId,
-          matchStatus: "VALID"
+          matchStatus: "VALID",
+          reviewedBy,
+          reviewedAt: new Date()
         }
       });
+
     } else if (action === "MARK_UNMATCHED") {
       await prisma.aiActivityMatch.update({
         where: { id: params.matchId },
-        data: { matchStatus: "INVALID", decision: "NO_MATCH" }
+        data: {
+          matchStatus: "INVALID",
+          decision: "NO_MATCH",
+          reviewedBy,
+          reviewedAt: new Date()
+        }
       });
+
     } else if (action === "REJECT_INVALID") {
       await prisma.aiActivityMatch.update({
         where: { id: params.matchId },
         data: {
           matchStatus: "INVALID",
-          decision: "REJECTED"
+          decision: "REJECTED",
+          reviewedBy,
+          reviewedAt: new Date()
         }
       });
+
     } else {
       return NextResponse.json({ error: "Unknown action." }, { status: 400 });
     }

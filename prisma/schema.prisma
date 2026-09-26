@@ -139,6 +139,8 @@ model aiActivityMatch {
   ruleValidation        Float?   // Breakdown component: 15% weight
   decision              String   // AUTO_ACCEPT | ACCEPT_MONITOR | FLAG_FOR_REVIEW | NO_MATCH | REJECTED
   matchStatus           String   @default("PENDING") // PENDING | VALID | INVALID
+  reviewedBy            String?  // Program Manager who actioned this record
+  reviewedAt            DateTime? // When the manager actioned this record
   createdAt             DateTime @default(now())
 
   update   supervisorUpdate  @relation(fields: [updateId], references: [updateId], onDelete: Cascade)
