@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { PmShell } from "@/components/PmShell";
 import { StatusChip } from "@/components/StatusChip";
 import { formatDate } from "@/lib/utils";
 import { ToastStack } from "@/components/Toast";
 import { useToasts } from "@/lib/useToasts";
-import { CheckCircle2, XCircle, HelpCircle } from "lucide-react";
+import { CheckCircle2, XCircle, HelpCircle, Search, RefreshCw } from "lucide-react";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 const CONFIDENCE_CRITERIA = [
@@ -48,9 +48,17 @@ export default function AuditDetailPage() {
 
   const [match, setMatch] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selectedCandidate, setSelectedCandidate] = useState<string>("");
   const [overrideReason, setOverrideReason] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // Select Different Activity state
+  const [showSelectDifferent, setShowSelectDifferent] = useState(false);
+  const [activitySearch, setActivitySearch] = useState("");
+  const [activityResults, setActivityResults] = useState<any[]>([]);
+  const [allActivities, setAllActivities] = useState<any[]>([]);
+  const [selectedActivityId, setSelectedActivityId] = useState<string>("");
+  const [loadingActivities, setLoadingActivities] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(() => {
     setError(null);
@@ -60,18 +68,63 @@ export default function AuditDetailPage() {
         return r.json();
       })
       .then((d) => {
-        console.log('Audit data:', d);
         setMatch(d.match);
       })
       .catch((err) => {
-        console.error('Load error:', err);
         setError(err.message || 'Failed to load audit record');
       });
   }, [params.matchId]);
 
+  useEffect(() => { load(); }, [load]);
+
+  // Load all activities for the project when "Select Different" is opened
+  async function openSelectDifferent() {
+    setShowSelectDifferent(true);
+    setActivitySearch("");
+    setSelectedActivityId("");
+    if (!match?.projectId || allActivities.length > 0) {
+      setTimeout(() => searchRef.current?.focus(), 50);
+      return;
+    }
+    setLoadingActivities(true);
+    try {
+      const res = await fetch(`/api/projects/${match.projectId}`);
+      const data = await res.json();
+      // Fetch full activity list via a separate call
+      const actRes = await fetch(`/api/projects/${match.projectId}/activities`);
+      if (actRes.ok) {
+        const actData = await actRes.json();
+        setAllActivities(actData.activities ?? []);
+        setActivityResults(actData.activities ?? []);
+      } else {
+        // Fallback: use disciplines/areas from project endpoint as metadata
+        setAllActivities([]);
+      }
+    } catch {
+      setAllActivities([]);
+    } finally {
+      setLoadingActivities(false);
+      setTimeout(() => searchRef.current?.focus(), 50);
+    }
+  }
+
+  // Filter activities client-side as user types
   useEffect(() => {
-    load();
-  }, [load]);
+    if (!activitySearch.trim()) {
+      setActivityResults(allActivities);
+      return;
+    }
+    const q = activitySearch.toLowerCase();
+    setActivityResults(
+      allActivities.filter(
+        (a) =>
+          a.activityName?.toLowerCase().includes(q) ||
+          a.activityId?.toLowerCase().includes(q) ||
+          a.discipline?.toLowerCase().includes(q) ||
+          a.area?.toLowerCase().includes(q)
+      )
+    );
+  }, [activitySearch, allActivities]);
 
   async function act(action: string, extra: Record<string, unknown> = {}) {
     setBusy(true);
@@ -87,6 +140,9 @@ export default function AuditDetailPage() {
         return;
       }
       push("success", "Audit record updated.");
+      setShowSelectDifferent(false);
+      setSelectedActivityId("");
+      setActivitySearch("");
       load();
     } catch {
       push("error", "Something went wrong.");
@@ -240,6 +296,82 @@ export default function AuditDetailPage() {
             <CheckCircle2 size={16} />
             Approve Match
           </button>
+
+          {/* Select Different Activity */}
+          {!showSelectDifferent ? (
+            <button
+              disabled={busy}
+              onClick={openSelectDifferent}
+              className="btn-secondary w-full"
+            >
+              <RefreshCw size={16} />
+              Select Different Activity
+            </button>
+          ) : (
+            <div className="space-y-3 rounded-xl border border-navy-100 bg-navy-50 p-4">
+              <p className="text-xs font-semibold text-navy-900">Select Correct Activity</p>
+
+              {/* Search input */}
+              <div className="relative">
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  ref={searchRef}
+                  type="text"
+                  placeholder="Search by name, discipline, area…"
+                  value={activitySearch}
+                  onChange={(e) => setActivitySearch(e.target.value)}
+                  className="input-field pl-8 text-xs"
+                />
+              </div>
+
+              {/* Results */}
+              <div className="max-h-52 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+                {loadingActivities ? (
+                  <p className="p-3 text-center text-xs text-slate-400">Loading activities…</p>
+                ) : activityResults.length === 0 ? (
+                  <p className="p-3 text-center text-xs text-slate-400">
+                    {activitySearch ? "No matches found." : "No activities in this project."}
+                  </p>
+                ) : (
+                  activityResults.slice(0, 50).map((a) => (
+                    <button
+                      key={a.activityId}
+                      onClick={() => setSelectedActivityId(a.activityId)}
+                      className={`w-full border-b border-slate-100 px-3 py-2.5 text-left transition last:border-0 hover:bg-slate-50 ${
+                        selectedActivityId === a.activityId ? "bg-teal-50 hover:bg-teal-50" : ""
+                      }`}
+                    >
+                      <p className={`truncate text-xs font-medium ${selectedActivityId === a.activityId ? "text-teal-700" : "text-navy-900"}`}>
+                        {a.activityName}
+                      </p>
+                      <p className="mt-0.5 truncate text-[10px] text-slate-400">
+                        {a.discipline} · {a.area} · {a.activityStatus}
+                      </p>
+                    </button>
+                  ))
+                )}
+              </div>
+
+              {/* Confirm / Cancel */}
+              <div className="flex gap-2">
+                <button
+                  disabled={busy || !selectedActivityId}
+                  onClick={() => act("SELECT_DIFFERENT", { selected_activity_id: selectedActivityId })}
+                  className="btn-primary flex-1 text-xs"
+                >
+                  <CheckCircle2 size={14} />
+                  Confirm Selection
+                </button>
+                <button
+                  onClick={() => { setShowSelectDifferent(false); setSelectedActivityId(""); setActivitySearch(""); }}
+                  className="btn-secondary px-3 text-xs"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
           <button disabled={busy} onClick={() => act("MARK_UNMATCHED")} className="btn-secondary w-full">
             <HelpCircle size={16} />
             Mark Unmatched
