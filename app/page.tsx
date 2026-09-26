@@ -5,20 +5,20 @@ import { useRouter } from "next/navigation";
 export default function LandingPage() {
   const router = useRouter();
 
-  function enterLogin() {
-    router.push("/login");
+  function enterApp() {
+    router.push("/pm");
   }
 
   return (
     <main
       className="intro-screen"
-      onClick={enterLogin}
+      onClick={enterApp}
       onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") enterLogin();
+        if (event.key === "Enter" || event.key === " ") enterApp();
       }}
       role="button"
       tabIndex={0}
-      aria-label="Open InfraSync-AI sign in"
+      aria-label="Open InfraSync-AI"
     >
       <div className="intro-grid" />
       <div className="intro-content">

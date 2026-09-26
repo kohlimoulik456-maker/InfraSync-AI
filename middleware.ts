@@ -29,30 +29,13 @@ function requiredRole(pathname: string): Role | null {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  if (pathname === "/api/auth/login" || pathname === "/login") return NextResponse.next();
-
+  
+  // Allow CORS preflight requests
   if (pathname.startsWith("/api/") && request.method === "OPTIONS") {
     return withLocalCors(new NextResponse(null, { status: 204 }), request);
   }
 
-  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-  const apiKey = process.env.AUTH_API_KEY;
-  let session = await verifySession(request.cookies.get("infrasync_session")?.value);
-  if (!session && apiKey && bearer && bearer === apiKey) {
-    session = { username: "api-client", role: (process.env.AUTH_API_ROLE as Role) || "SUPERVISOR", expiresAt: Date.now() + 60_000 };
-  }
-
-  if (!session) {
-    if (pathname.startsWith("/api/")) return withLocalCors(NextResponse.json({ error: "Authentication required" }, { status: 401 }), request);
-    return NextResponse.redirect(new URL("/login", request.url));
-  }
-
-  const required = requiredRole(pathname);
-  if (required && !roleAtLeast(session.role, required)) {
-    if (pathname.startsWith("/api/")) return withLocalCors(NextResponse.json({ error: "Insufficient permissions" }, { status: 403 }), request);
-    return NextResponse.redirect(new URL("/unauthorized", request.url));
-  }
-
+  // Authentication is disabled - allow all requests to proceed
   return withLocalCors(NextResponse.next(), request);
 }
 
