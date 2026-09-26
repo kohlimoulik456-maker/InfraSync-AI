@@ -14,7 +14,7 @@ export function isDemoMode(): boolean {
 
 function getModel() {
   const apiKey = process.env.GEMINI_API_KEY as string;
-  const modelName = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+  const modelName = process.env.GEMINI_MODEL || "gemini-3.8-flash";
   const client = new GoogleGenerativeAI(apiKey);
   return client.getGenerativeModel({ model: modelName });
 }
