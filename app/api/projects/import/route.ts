@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import { prisma } from "@/lib/prisma";
 import { importSchedule } from "@/lib/services/scheduleImportService";
 import { processExcelUpload } from "@/lib/inputProcessors/excelProcessor";
+import { SESSION_COOKIE, verifySession } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,15 +29,19 @@ export async function POST(req: NextRequest) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const { summary, headerErrors } = await importSchedule(buffer, filename, projectId, projectName);
+    const session = await verifySession(req.cookies.get(SESSION_COOKIE)?.value);
+    const { summary, headerErrors, scheduleVersionId } = await importSchedule(buffer, filename, projectId, projectName, session?.username);
 
     if (headerErrors.length > 0) {
       return NextResponse.json({ error: "Schedule file is missing required headers.", headerErrors }, { status: 400 });
     }
 
+    const scheduleVersion = scheduleVersionId
+      ? await prisma.scheduleVersion.findUnique({ where: { scheduleVersionId }, select: { status: true } })
+      : null;
     let fundTransactionsImported = 0;
     let supervisorUpdatesImported = 0;
-    if (filename.endsWith(".xlsx")) {
+    if (filename.endsWith(".xlsx") && scheduleVersion?.status === "CURRENT") {
       const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
       const fundSheet = workbook.Sheets["Fund_Transactions"];
       const fundRows = fundSheet ? XLSX.utils.sheet_to_json<Record<string, any>>(fundSheet, { defval: null }) : [];
@@ -65,8 +70,7 @@ export async function POST(req: NextRequest) {
         supervisorUpdatesImported = updateSummary.validRows;
       }
     }
-
-    return NextResponse.json({ projectId, summary, fundTransactionsImported, supervisorUpdatesImported });
+    return NextResponse.json({ projectId, scheduleVersionId, scheduleStatus: scheduleVersion?.status, summary, fundTransactionsImported, supervisorUpdatesImported });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || "Failed to import schedule." }, { status: 500 });
   }

@@ -40,7 +40,8 @@ import {
   RefreshCw,
   Wallet,
   ArrowDownToLine,
-  ArrowUpFromLine
+  ArrowUpFromLine,
+  History
 } from "lucide-react";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -150,6 +151,9 @@ export default function ProjectDashboardPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
+          <a href={`/pm/projects/${encodeURIComponent(projectId)}/schedule-versions`} className="btn-secondary text-xs">
+            <History size={14} /> Schedule Versions
+          </a>
           <button onClick={load} disabled={loading} className="btn-secondary text-xs" title="Refresh dashboard data">
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
             Refresh

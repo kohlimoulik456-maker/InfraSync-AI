@@ -1,0 +1,204 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { ArrowLeft, Check, Clock3, FileUp, RotateCw } from "lucide-react";
+import { PmShell } from "@/components/PmShell";
+import { formatDate } from "@/lib/utils";
+
+interface ScheduleVersion {
+  scheduleVersionId: string;
+  versionNumber: number;
+  status: "DRAFT" | "VALIDATED" | "APPROVED" | "CURRENT" | "SUPERSEDED" | "REJECTED";
+  sourceFileName: string | null;
+  createdBy: string | null;
+  approvedBy: string | null;
+  totalRows: number;
+  importedRows: number;
+  rejectedRows: number;
+  createdAt: string;
+  activatedAt: string | null;
+}
+
+export default function ScheduleVersionsPage() {
+  const { projectId } = useParams<{ projectId: string }>();
+  const [versions, setVersions] = useState<ScheduleVersion[]>([]);
+  const [file, setFile] = useState<File | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [rejections, setRejections] = useState<{ rowIndex: number; activityId: string | null; reason: string }[]>([]);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/schedule-versions`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Could not load schedule versions.");
+      setVersions(result.versions ?? []);
+      setError(null);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Could not load schedule versions.");
+    } finally {
+      setLoading(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  async function stageRevision(event: React.FormEvent) {
+    event.preventDefault();
+    if (!file) {
+      setError("Choose an .xlsx or .csv schedule file first.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/schedule-versions`, {
+        method: "POST",
+        body: formData
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error([result.error, ...(result.headerErrors ?? [])].filter(Boolean).join(" "));
+      setFile(null);
+      setRejections(result.summary.rejections ?? []);
+      setNotice(`Version ${result.summary.imported ? "staged" : "created"} with ${result.summary.imported} valid activities and ${result.summary.rejected} rejected rows.`);
+      await refresh();
+    } catch (stageError) {
+      setError(stageError instanceof Error ? stageError.message : "Could not stage schedule version.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function approve(version: ScheduleVersion) {
+    if (!window.confirm(`Approve version ${version.versionNumber} and make it the active project schedule?`)) return;
+    setSubmitting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(projectId)}/schedule-versions/${encodeURIComponent(version.scheduleVersionId)}/approve`,
+        { method: "POST" }
+      );
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Could not approve schedule version.");
+      setNotice(`Version ${version.versionNumber} is now the active schedule.`);
+      await refresh();
+    } catch (approvalError) {
+      setError(approvalError instanceof Error ? approvalError.message : "Could not approve schedule version.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <PmShell>
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <Link href={`/pm/projects/${encodeURIComponent(projectId)}/dashboard`} className="mb-3 inline-flex items-center gap-2 text-xs text-slate-500 hover:text-navy-800">
+            <ArrowLeft size={14} /> Project dashboard
+          </Link>
+          <h1 className="text-2xl font-semibold text-navy-900">Schedule Versions</h1>
+          <p className="mt-1 font-mono text-xs text-slate-500">{projectId}</p>
+        </div>
+        <button type="button" onClick={() => void refresh()} className="btn-secondary text-xs" title="Refresh schedule versions">
+          <RotateCw size={14} /> Refresh
+        </button>
+      </div>
+
+      <form onSubmit={stageRevision} className="card mb-6 flex flex-wrap items-end gap-4 p-5">
+        <div className="min-w-60 flex-1">
+          <label htmlFor="schedule-revision" className="label-field">Stage a schedule revision</label>
+          <input
+            id="schedule-revision"
+            type="file"
+            accept=".xlsx,.csv"
+            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+            className="input-field text-sm"
+          />
+          <p className="mt-1 text-xs text-slate-500">This creates an inactive version; it does not replace the current schedule.</p>
+        </div>
+        <button type="submit" disabled={submitting || !file} className="btn-primary">
+          <FileUp size={15} /> {submitting ? "Staging…" : "Stage revision"}
+        </button>
+      </form>
+
+      {error && <div role="alert" className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</div>}
+      {notice && <div role="status" className="mb-4 rounded-lg border border-teal-200 bg-teal-50 p-3 text-sm text-teal-800">{notice}</div>}
+      {rejections.length > 0 && (
+        <div className="card mb-6 overflow-hidden">
+          <div className="border-b border-slate-100 px-4 py-3 text-sm font-semibold text-amber-800">Rejected rows</div>
+          <div className="max-h-64 overflow-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="sticky top-0 bg-slate-50 text-slate-500">
+                <tr><th className="px-4 py-2">Row</th><th className="px-4 py-2">Activity ID</th><th className="px-4 py-2">Reason</th></tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {rejections.map((rejection) => (
+                  <tr key={`${rejection.rowIndex}-${rejection.activityId ?? "missing"}`}>
+                    <td className="px-4 py-2">{rejection.rowIndex}</td>
+                    <td className="px-4 py-2 font-mono">{rejection.activityId ?? "—"}</td>
+                    <td className="px-4 py-2 text-slate-600">{rejection.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div className="card overflow-hidden">
+        <div className="grid grid-cols-[1fr_auto] items-center border-b border-slate-100 px-5 py-3">
+          <h2 className="text-sm font-semibold text-navy-900">Version history</h2>
+          <span className="text-xs text-slate-500">{versions.length} versions</span>
+        </div>
+        {loading ? <p className="p-8 text-center text-sm text-slate-500">Loading schedule versions…</p> : versions.length === 0 ? (
+          <p className="p-8 text-center text-sm text-slate-500">No schedule versions have been recorded.</p>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {versions.map((version) => (
+              <div key={version.scheduleVersionId} className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-semibold text-navy-900">Version {version.versionNumber}</p>
+                    <span className={`chip ${version.status === "CURRENT" ? "chip-teal" : version.status === "VALIDATED" ? "chip-amber" : ""}`}>
+                      {version.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 truncate text-xs text-slate-500">{version.sourceFileName ?? "Existing schedule data"}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {version.importedRows} activities · {version.rejectedRows} rejected · created {formatDate(version.createdAt)}
+                    {version.activatedAt ? ` · activated ${formatDate(version.activatedAt)}` : ""}
+                  </p>
+                  {(version.createdBy || version.approvedBy) && (
+                    <p className="mt-1 text-xs text-slate-400">
+                      {version.createdBy ? `Uploaded by ${version.createdBy}` : ""}
+                      {version.createdBy && version.approvedBy ? " · " : ""}
+                      {version.approvedBy ? `Approved by ${version.approvedBy}` : ""}
+                    </p>
+                  )}
+                </div>
+                {version.status === "VALIDATED" && version.rejectedRows === 0 ? (
+                  <button type="button" disabled={submitting} onClick={() => void approve(version)} className="btn-primary text-xs">
+                    <Check size={14} /> Approve and activate
+                  </button>
+                ) : version.status === "DRAFT" ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-amber-700"><Clock3 size={13} /> Fix rejected rows and re-upload</span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </PmShell>
+  );
+}

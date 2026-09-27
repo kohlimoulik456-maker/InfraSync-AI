@@ -78,12 +78,13 @@ export async function validateHeaders(rows: RawRow[]): Promise<string[]> {
   return missing.map((h) => `Missing required column: ${h}`);
 }
 
-export async function importSchedule(
-  buffer: Buffer,
-  filename: string,
-  formProjectId: string,
-  formProjectName: string
-): Promise<{ summary: ScheduleImportSummary; headerErrors: string[] }> {
+interface PreparedSchedule {
+  headerErrors: string[];
+  summary: ScheduleImportSummary;
+  validRows: any[];
+}
+
+async function prepareScheduleImport(buffer: Buffer, filename: string, projectId: string): Promise<PreparedSchedule> {
   const rows = parseSheet(buffer, filename);
   const headerErrors = await validateHeaders(rows);
   if (headerErrors.length > 0) {
@@ -96,7 +97,8 @@ export async function importSchedule(
         duplicateActivityIds: [],
         disciplinesDetected: [],
         rejections: []
-      }
+      },
+      validRows: []
     };
   }
 
@@ -109,12 +111,12 @@ export async function importSchedule(
   rows.forEach((raw, idx) => {
     const rowIndex = idx + 1;
     const activityId = raw.Activity_ID ? String(raw.Activity_ID).trim() : null;
-    const projectId = raw.Project_ID ? String(raw.Project_ID).trim() : "";
+    const rowProjectId = raw.Project_ID ? String(raw.Project_ID).trim() : "";
     const activityName = raw.Activity_Name ? String(raw.Activity_Name).trim() : "";
     const discipline = raw.Discipline ? String(raw.Discipline).trim().toUpperCase() : "";
 
-    if (projectId !== formProjectId) {
-      rejections.push({ rowIndex, activityId, reason: `Project_ID "${projectId}" does not match "${formProjectId}".` });
+    if (rowProjectId !== projectId) {
+      rejections.push({ rowIndex, activityId, reason: `Project_ID "${rowProjectId}" does not match "${projectId}".` });
       return;
     }
     if (!activityId) {
@@ -178,7 +180,7 @@ export async function importSchedule(
       wbsL5: raw.WBS_L5 ? String(raw.WBS_L5) : null,
       wbsL6: raw.WBS_L6 ? String(raw.WBS_L6) : null,
       discipline,
-      area,
+      area: area ?? "",
       plannedStart,
       plannedFinish,
       plannedDuration,
@@ -190,22 +192,6 @@ export async function importSchedule(
     });
   });
 
-  await prisma.$transaction(async (tx) => {
-    await tx.project.upsert({
-      where: { projectId: formProjectId },
-      update: { projectName: formProjectName },
-      create: { projectId: formProjectId, projectName: formProjectName }
-    });
-
-    for (const row of validRows) {
-      await tx.scheduleActivity.upsert({
-        where: { activityId: row.activityId },
-        update: row,
-        create: row
-      });
-    }
-  });
-
   return {
     headerErrors: [],
     summary: {
@@ -215,6 +201,201 @@ export async function importSchedule(
       duplicateActivityIds: Array.from(duplicates),
       disciplinesDetected: Array.from(disciplines),
       rejections
-    }
+    },
+    validRows
   };
+}
+
+function toVersionActivity(row: any, scheduleVersionId: string) {
+  const { projectId: importedProjectId, ...activity } = row;
+  void importedProjectId;
+  return { ...activity, scheduleVersionId };
+}
+
+export async function importSchedule(
+  buffer: Buffer,
+  filename: string,
+  formProjectId: string,
+  formProjectName: string,
+  createdBy?: string
+): Promise<{ summary: ScheduleImportSummary; headerErrors: string[]; scheduleVersionId?: string }> {
+  const prepared = await prepareScheduleImport(buffer, filename, formProjectId);
+  const { summary, headerErrors, validRows } = prepared;
+  if (headerErrors.length > 0) {
+    return {
+      headerErrors,
+      summary
+    };
+  }
+
+  const now = new Date();
+  let scheduleVersionId = "";
+  // ─── FIXED: batch operations instead of per-row upserts ─────────────────────
+  await prisma.$transaction(async (tx) => {
+    await tx.project.create({
+      data: { projectId: formProjectId, projectName: formProjectName }
+    });
+
+    const version = await tx.scheduleVersion.create({
+      data: {
+        projectId: formProjectId,
+        versionNumber: 1,
+        status: summary.imported > 0 && summary.rejected === 0 ? "CURRENT" : "DRAFT",
+        sourceFileName: filename,
+        createdBy,
+        approvedBy: summary.imported > 0 && summary.rejected === 0 ? createdBy : null,
+        totalRows: summary.totalRows,
+        importedRows: summary.imported,
+        rejectedRows: summary.rejected,
+        validatedAt: summary.imported > 0 && summary.rejected === 0 ? now : null,
+        approvedAt: summary.imported > 0 && summary.rejected === 0 ? now : null,
+        activatedAt: summary.imported > 0 && summary.rejected === 0 ? now : null
+      }
+    });
+    scheduleVersionId = version.scheduleVersionId;
+
+    if (validRows.length > 0) {
+      await tx.scheduleVersionActivity.createMany({
+        data: validRows.map((row) => toVersionActivity(row, scheduleVersionId))
+      });
+    }
+    if (validRows.length > 0 && summary.imported > 0 && summary.rejected === 0) {
+      await tx.scheduleActivity.createMany({ data: validRows });
+    }
+  });
+
+  return { headerErrors: [], summary, scheduleVersionId };
+}
+
+export async function stageScheduleRevision(
+  buffer: Buffer,
+  filename: string,
+  projectId: string,
+  createdBy?: string
+): Promise<{ summary: ScheduleImportSummary; headerErrors: string[]; scheduleVersionId: string | null }> {
+  const prepared = await prepareScheduleImport(buffer, filename, projectId);
+  if (prepared.headerErrors.length > 0) {
+    return { ...prepared, scheduleVersionId: null };
+  }
+
+  const version = await prisma.$transaction(async (tx) => {
+    const project = await tx.project.findUnique({ where: { projectId }, select: { projectId: true } });
+    if (!project) throw new Error(`Project_ID "${projectId}" was not found.`);
+    await tx.$queryRaw`SELECT "projectId" FROM "project" WHERE "projectId" = ${projectId} FOR UPDATE`;
+
+    const latest = await tx.scheduleVersion.aggregate({
+      where: { projectId },
+      _max: { versionNumber: true }
+    });
+    const scheduleVersion = await tx.scheduleVersion.create({
+      data: {
+        projectId,
+        versionNumber: (latest._max.versionNumber ?? 0) + 1,
+        status: prepared.summary.imported > 0 && prepared.summary.rejected === 0 ? "VALIDATED" : "DRAFT",
+        sourceFileName: filename,
+        createdBy,
+        totalRows: prepared.summary.totalRows,
+        importedRows: prepared.summary.imported,
+        rejectedRows: prepared.summary.rejected,
+        validatedAt: prepared.summary.imported > 0 && prepared.summary.rejected === 0 ? new Date() : null
+      }
+    });
+
+    if (prepared.validRows.length > 0) {
+      await tx.scheduleVersionActivity.createMany({
+        data: prepared.validRows.map((row) => toVersionActivity(row, scheduleVersion.scheduleVersionId))
+      });
+    }
+    return scheduleVersion;
+  });
+
+  return { ...prepared, scheduleVersionId: version.scheduleVersionId };
+}
+
+export async function activateScheduleVersion(projectId: string, scheduleVersionId: string, approvedBy: string) {
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "projectId" FROM "project" WHERE "projectId" = ${projectId} FOR UPDATE`;
+
+    const version = await tx.scheduleVersion.findFirst({
+      where: { projectId, scheduleVersionId },
+      include: { activities: true }
+    });
+    if (!version) throw new Error("Schedule version not found.");
+    if (version.status !== "VALIDATED" || version.rejectedRows > 0) {
+      throw new Error("Only a fully validated schedule version can be approved.");
+    }
+    if (version.activities.length === 0) throw new Error("A schedule version must contain at least one activity.");
+
+    const conflictingIds = await tx.scheduleActivity.findMany({
+      where: {
+        activityId: { in: version.activities.map((activity) => activity.activityId) },
+        projectId: { not: projectId }
+      },
+      select: { activityId: true },
+      take: 1
+    });
+    if (conflictingIds.length > 0) {
+      throw new Error(`Activity_ID "${conflictingIds[0].activityId}" is already assigned to another project.`);
+    }
+
+    const serializedActivities = JSON.stringify(version.activities.map((activity) => ({
+      ...activity,
+      plannedStart: activity.plannedStart.toISOString(),
+      plannedFinish: activity.plannedFinish.toISOString()
+    })));
+
+    await tx.$executeRaw`
+      INSERT INTO "scheduleActivity" (
+        "activityId", "projectId", "activityName", "discipline", "area", "contractor",
+        "wbsL1", "wbsL2", "wbsL3", "wbsL4", "wbsL5", "wbsL6", "plannedStart", "plannedFinish",
+        "plannedDuration", "activityStatus", "isCurrentSchedule", "predecessorId", "fieldKeywords", "normalizedSearchText"
+      )
+      SELECT incoming."activityId", ${projectId}, incoming."activityName", incoming."discipline", incoming."area", incoming."contractor",
+        incoming."wbsL1", incoming."wbsL2", incoming."wbsL3", incoming."wbsL4", incoming."wbsL5", incoming."wbsL6",
+        incoming."plannedStart", incoming."plannedFinish", incoming."plannedDuration", incoming."activityStatus", true,
+        incoming."predecessorId", incoming."fieldKeywords", incoming."normalizedSearchText"
+      FROM jsonb_to_recordset(${serializedActivities}::jsonb) AS incoming(
+        "activityId" text, "activityName" text, "discipline" text, "area" text, "contractor" text,
+        "wbsL1" text, "wbsL2" text, "wbsL3" text, "wbsL4" text, "wbsL5" text, "wbsL6" text,
+        "plannedStart" timestamp, "plannedFinish" timestamp, "plannedDuration" integer, "activityStatus" text,
+        "predecessorId" text, "fieldKeywords" text, "normalizedSearchText" text
+      )
+      ON CONFLICT ("activityId") DO UPDATE SET
+        "activityName" = EXCLUDED."activityName",
+        "discipline" = EXCLUDED."discipline",
+        "area" = EXCLUDED."area",
+        "contractor" = EXCLUDED."contractor",
+        "wbsL1" = EXCLUDED."wbsL1",
+        "wbsL2" = EXCLUDED."wbsL2",
+        "wbsL3" = EXCLUDED."wbsL3",
+        "wbsL4" = EXCLUDED."wbsL4",
+        "wbsL5" = EXCLUDED."wbsL5",
+        "wbsL6" = EXCLUDED."wbsL6",
+        "plannedStart" = EXCLUDED."plannedStart",
+        "plannedFinish" = EXCLUDED."plannedFinish",
+        "plannedDuration" = EXCLUDED."plannedDuration",
+        "predecessorId" = EXCLUDED."predecessorId",
+        "fieldKeywords" = EXCLUDED."fieldKeywords",
+        "normalizedSearchText" = EXCLUDED."normalizedSearchText",
+        "isCurrentSchedule" = true
+      WHERE "scheduleActivity"."projectId" = EXCLUDED."projectId"
+    `;
+
+    await tx.scheduleActivity.updateMany({
+      where: {
+        projectId,
+        activityId: { notIn: version.activities.map((activity) => activity.activityId) }
+      },
+      data: { isCurrentSchedule: false }
+    });
+    await tx.scheduleVersion.updateMany({
+      where: { projectId, status: "CURRENT" },
+      data: { status: "SUPERSEDED" }
+    });
+    return tx.scheduleVersion.update({
+      where: { scheduleVersionId },
+      data: { status: "CURRENT", approvedBy, approvedAt: new Date(), activatedAt: new Date() },
+      select: { scheduleVersionId: true, versionNumber: true, status: true }
+    });
+  });
 }

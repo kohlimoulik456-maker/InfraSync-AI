@@ -8,6 +8,15 @@ generator client {
   provider = "prisma-client-js"
 }
 
+enum ScheduleVersionStatus {
+  DRAFT
+  VALIDATED
+  APPROVED
+  CURRENT
+  SUPERSEDED
+  REJECTED
+}
+
 // ─────────────────────────────────────────────
 // Core project
 // ─────────────────────────────────────────────
@@ -20,6 +29,30 @@ model project {
   supervisorUpdates supervisorUpdate[]
   lessonsLearned    lessonLearned[]
   fundTransactions  fundTransaction[]
+  scheduleVersions  scheduleVersion[]
+}
+
+model scheduleVersion {
+  scheduleVersionId String                @id @default(uuid())
+  projectId         String
+  versionNumber     Int
+  status            ScheduleVersionStatus @default(DRAFT)
+  sourceFileName    String?
+  createdBy         String?
+  approvedBy        String?
+  totalRows         Int                   @default(0)
+  importedRows      Int                   @default(0)
+  rejectedRows      Int                   @default(0)
+  createdAt         DateTime              @default(now())
+  validatedAt       DateTime?
+  approvedAt        DateTime?
+  activatedAt       DateTime?
+
+  project    project                  @relation(fields: [projectId], references: [projectId], onDelete: Cascade)
+  activities scheduleVersionActivity[]
+
+  @@unique([projectId, versionNumber])
+  @@index([projectId, status])
 }
 
 // ─────────────────────────────────────────────
@@ -61,6 +94,7 @@ model scheduleActivity {
   plannedFinish  DateTime
   plannedDuration Int?    // days (can be computed or stored)
   activityStatus String   // COMPLETED | IN_PROGRESS | DELAYED | NOT_STARTED
+  isCurrentSchedule Boolean @default(true)
   predecessorId  String?
   fieldKeywords  String?
   normalizedSearchText String @default("")
@@ -72,6 +106,34 @@ model scheduleActivity {
   lessonsLearned   lessonLearned[]
 
   @@index([projectId, activityStatus])
+  @@index([projectId, isCurrentSchedule])
+}
+
+model scheduleVersionActivity {
+  scheduleVersionId String
+  activityId        String
+  activityName      String
+  discipline        String
+  area              String
+  contractor        String?
+  wbsL1             String?
+  wbsL2             String?
+  wbsL3             String?
+  wbsL4             String?
+  wbsL5             String?
+  wbsL6             String?
+  plannedStart      DateTime
+  plannedFinish     DateTime
+  plannedDuration   Int?
+  activityStatus    String
+  predecessorId     String?
+  fieldKeywords     String?
+  normalizedSearchText String
+
+  scheduleVersion scheduleVersion @relation(fields: [scheduleVersionId], references: [scheduleVersionId], onDelete: Cascade)
+
+  @@id([scheduleVersionId, activityId])
+  @@index([activityId])
 }
 
 // ─────────────────────────────────────────────

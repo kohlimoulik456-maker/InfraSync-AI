@@ -22,6 +22,7 @@ function requiredRole(pathname: string): Role | null {
     pathname.startsWith("/api/audit") ||
     pathname.startsWith("/api/institutional-memory") ||
     pathname.startsWith("/api/projects/import") ||
+    (pathname.startsWith("/api/projects/") && pathname.includes("/schedule-versions")) ||
     pathname.startsWith("/api/dashboard") ||
     pathname.startsWith("/api/templates") ||
     pathname.startsWith("/pm")

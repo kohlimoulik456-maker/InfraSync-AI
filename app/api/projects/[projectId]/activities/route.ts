@@ -8,7 +8,7 @@ export async function GET(req: NextRequest, { params }: { params: { projectId: s
   if (!project) return NextResponse.json({ error: "Project not found." }, { status: 404 });
 
   const activities = await prisma.scheduleActivity.findMany({
-    where: { projectId: params.projectId },
+    where: { projectId: params.projectId, isCurrentSchedule: true },
     select: {
       activityId: true,
       activityName: true,

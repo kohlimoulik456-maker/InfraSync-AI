@@ -12,7 +12,7 @@ export async function retrieveTopCandidates(
   extraction: LlmExtraction
 ): Promise<CandidateActivity[]> {
   const activities = await prisma.scheduleActivity.findMany({
-    where: { projectId }
+    where: { projectId, isCurrentSchedule: true }
   });
 
   if (activities.length === 0) return [];

@@ -14,12 +14,12 @@ export async function GET() {
   // Batch fetch activities and audits in parallel — 2 queries total instead of N*2
   const [activities, auditCounts] = await Promise.all([
     prisma.scheduleActivity.findMany({
-      where: { projectId: { in: projectIds } },
+      where: { projectId: { in: projectIds }, isCurrentSchedule: true },
       select: { projectId: true, activityStatus: true },
     }),
     prisma.aiActivityMatch.groupBy({
       by: ["projectId"],
-      where: { projectId: { in: projectIds }, decision: "FLAG_FOR_REVIEW" },
+      where: { projectId: { in: projectIds }, decision: "FLAG_FOR_REVIEW", activity: { isCurrentSchedule: true } },
       _count: { _all: true },
     }),
   ]);

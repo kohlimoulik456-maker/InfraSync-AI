@@ -16,6 +16,7 @@ interface ImportSummary {
   rejections: { rowIndex: number; activityId: string | null; reason: string }[];
   fundTransactionsImported?: number;
   supervisorUpdatesImported?: number;
+  scheduleStatus?: string;
 }
 
 export default function NewProjectPage() {
@@ -63,11 +64,14 @@ export default function NewProjectPage() {
 
       setSummary({
         ...data.summary,
+        scheduleStatus: data.scheduleStatus,
         fundTransactionsImported: data.fundTransactionsImported,
         supervisorUpdatesImported: data.supervisorUpdatesImported
       });
       setImportedProjectId(data.projectId);
-      push("success", `Project "${projectId}" created and schedule imported.`);
+      push("success", data.scheduleStatus === "CURRENT"
+        ? `Project "${projectId}" created with its initial schedule active.`
+        : `Project "${projectId}" created. Review the draft schedule before activation.`);
     } catch {
       push("error", "Something went wrong while importing the schedule.");
     } finally {
@@ -219,9 +223,11 @@ export default function NewProjectPage() {
           {importedProjectId && (
             <button
               className="btn-primary mt-5"
-              onClick={() => router.push(`/pm/projects/${importedProjectId}/dashboard`)}
+              onClick={() => router.push(summary.scheduleStatus === "CURRENT"
+                ? `/pm/projects/${importedProjectId}/dashboard`
+                : `/pm/projects/${importedProjectId}/schedule-versions`)}
             >
-              Go to Project Dashboard
+              {summary.scheduleStatus === "CURRENT" ? "Go to Project Dashboard" : "Review Schedule Version"}
             </button>
           )}
         </div>
