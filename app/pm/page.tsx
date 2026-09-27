@@ -47,10 +47,27 @@ export default function WorkingProjectsPage() {
   const [sort, setSort] = useState<SortKey>("date");
 
   useEffect(() => {
+    let cancelled = false;
+
     fetch("/api/projects")
-      .then((r) => r.json())
-      .then((d) => setProjects(d.projects))
-      .catch(() => setError("Could not load projects. Check your database connection."));
+      .then(async (response) => {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error ?? "Could not load projects.");
+        if (!Array.isArray(result.projects)) throw new Error("The projects response was invalid.");
+        return result.projects;
+      })
+      .then((loadedProjects) => {
+        if (!cancelled) setProjects(loadedProjects);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) {
+          setError(loadError instanceof Error ? loadError.message : "Could not load projects.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const stats = useMemo(() => {

@@ -70,6 +70,8 @@ model scheduleActivity {
   aiMatches        aiActivityMatch[]
   supervisorUpdates supervisorUpdate[]
   lessonsLearned   lessonLearned[]
+
+  @@index([projectId, activityStatus])
 }
 
 // ─────────────────────────────────────────────
@@ -93,6 +95,8 @@ model activityActual {
 
   activity scheduleActivity @relation(fields: [activityId], references: [activityId], onDelete: Cascade)
   update   supervisorUpdate? @relation(fields: [updateId], references: [updateId], onDelete: Cascade)
+
+  @@index([activityId, verifiedAt])
 }
 
 // ─────────────────────────────────────────────
@@ -122,6 +126,9 @@ model supervisorUpdate {
   activity scheduleActivity? @relation(fields: [activityId], references: [activityId], onDelete: SetNull)
   matches  aiActivityMatch[]
   actuals  activityActual[]
+
+  @@index([projectId, createdAt])
+  @@index([projectId, discipline])
 }
 
 // ─────────────────────────────────────────────
@@ -145,6 +152,10 @@ model aiActivityMatch {
 
   update   supervisorUpdate  @relation(fields: [updateId], references: [updateId], onDelete: Cascade)
   activity scheduleActivity? @relation(fields: [activityId], references: [activityId], onDelete: SetNull)
+
+  @@index([projectId, decision])
+  @@index([activityId, decision])
+  @@index([activityId, createdAt])
 }
 
 // ─────────────────────────────────────────────
@@ -170,4 +181,6 @@ model lessonLearned {
 
   project  project           @relation(fields: [projectId], references: [projectId], onDelete: Cascade)
   activity scheduleActivity? @relation(fields: [activityId], references: [activityId], onDelete: SetNull)
+
+  @@index([projectId, approved])
 }

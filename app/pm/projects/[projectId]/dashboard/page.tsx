@@ -58,32 +58,45 @@ export default function ProjectDashboardPage() {
   const [filters, setFilters] = useState<{ discipline?: string; area?: string; contractor?: string; activityStatus?: string }>({});
   const [meta, setMeta] = useState<{ disciplines: string[]; areas: string[]; contractors: string[] } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "funds">("funds");
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     const q = new URLSearchParams();
     if (filters.discipline) q.set("discipline", filters.discipline);
     if (filters.area) q.set("area", filters.area);
     if (filters.contractor) q.set("contractor", filters.contractor);
     if (filters.activityStatus) q.set("activityStatus", filters.activityStatus);
 
-    const [dashRes, projRes] = await Promise.all([
-      fetch(`/api/dashboard/${projectId}?${q.toString()}`).then((r) => r.json()),
-      fetch(`/api/projects/${projectId}`).then((r) => r.json())
-    ]);
-    setData(dashRes);
-    setMeta({ disciplines: projRes.disciplines ?? [], areas: projRes.areas ?? [], contractors: projRes.contractors ?? [] });
-    setLastLoadedAt(new Date());
-    setLoading(false);
+    try {
+      const [dashRes, projRes] = await Promise.all([
+        fetch(`/api/dashboard/${projectId}?${q.toString()}`),
+        fetch(`/api/projects/${projectId}`)
+      ]);
+      const [dashData, projData] = await Promise.all([dashRes.json(), projRes.json()]);
+      if (!dashRes.ok || !projRes.ok) {
+        const responseError = [dashData, projData].find((result) => typeof result?.error === "string")?.error;
+        throw new Error(responseError ?? "Could not load dashboard data.");
+      }
+
+      setData(dashData);
+      setMeta({ disciplines: projData.disciplines ?? [], areas: projData.areas ?? [], contractors: projData.contractors ?? [] });
+      setLastLoadedAt(new Date());
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not load dashboard data.");
+    } finally {
+      setLoading(false);
+    }
   }, [projectId, filters]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  if (loading || !data) {
+  if (loading || (!data && !loadError)) {
     return (
       <PmShell>
         <div className="flex min-h-[60vh] items-center justify-center">
@@ -91,6 +104,21 @@ export default function ProjectDashboardPage() {
             <div className="mx-auto mb-4 h-16 w-16 animate-spin rounded-full border-4 border-slate-200 border-t-navy-600"></div>
             <p className="text-sm font-medium text-slate-600">Loading dashboard data...</p>
             <p className="mt-1 text-xs text-slate-400">Analyzing {projectId.slice(0, 8)}...</p>
+          </div>
+        </div>
+      </PmShell>
+    );
+  }
+
+  if (!data || loadError) {
+    return (
+      <PmShell>
+        <div className="mx-auto mt-12 max-w-xl card border-rose-200 bg-rose-50 p-6 text-center">
+          <p className="font-semibold text-rose-800">Dashboard data could not be loaded</p>
+          <p className="mt-2 text-sm text-rose-700">{loadError ?? "No dashboard data was returned."}</p>
+          <div className="mt-4 flex justify-center gap-3">
+            {loadError === "Authentication required" && <a href="/login" className="btn-secondary">Sign in again</a>}
+            <button onClick={load} className="btn-primary">Try again</button>
           </div>
         </div>
       </PmShell>

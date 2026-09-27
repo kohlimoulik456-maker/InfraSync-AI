@@ -18,11 +18,11 @@ export async function getFundTracing(projectId: string) {
   });
 
   const received = transactions
-    .filter((transaction) => transaction.transactionType === "RECEIPT")
-    .reduce((total, transaction) => total + transaction.amount, 0);
+    .filter((t) => t.transactionType === "RECEIPT")
+    .reduce((s, t) => s + t.amount, 0);
   const used = transactions
-    .filter((transaction) => transaction.transactionType === "EXPENDITURE")
-    .reduce((total, transaction) => total + transaction.amount, 0);
+    .filter((t) => t.transactionType === "EXPENDITURE")
+    .reduce((s, t) => s + t.amount, 0);
 
   return {
     received,
@@ -52,19 +52,10 @@ export async function getProjectHealthOverview(projectId: string, filters: Dashb
   const delayed = activities.filter((a) => a.activityStatus === "DELAYED").length;
   const notStarted = activities.filter((a) => a.activityStatus === "NOT_STARTED").length;
 
-  const pendingAudits = await prisma.aiActivityMatch.count({
-    where: {
-      projectId,
-      decision: "FLAG_FOR_REVIEW"
-    }
-  });
-
-  const lastUpdate = await prisma.supervisorUpdate.findFirst({
-    where: { projectId },
-    orderBy: { createdAt: "desc" }
-  });
-
-  const overallProgress = total > 0 ? Math.round((completed / total) * 1000) / 10 : 0;
+  const [pendingAudits, lastUpdate] = await Promise.all([
+    prisma.aiActivityMatch.count({ where: { projectId, decision: "FLAG_FOR_REVIEW" } }),
+    prisma.supervisorUpdate.findFirst({ where: { projectId }, orderBy: { createdAt: "desc" } })
+  ]);
 
   const now = new Date();
   const scheduleVarianceActivities = activities.filter(
@@ -72,7 +63,7 @@ export async function getProjectHealthOverview(projectId: string, filters: Dashb
   ).length;
 
   return {
-    overallProgressPct: overallProgress,
+    overallProgressPct: total > 0 ? Math.round((completed / total) * 1000) / 10 : 0,
     completedActivities: completed,
     inProgressActivities: inProgress,
     delayedActivities: delayed,
@@ -96,8 +87,41 @@ export async function getPlannedVsActual(projectId: string) {
   };
 }
 
+// ─── FIXED: was 1+2N queries, now 3 queries total ────────────────────────────
 export async function getActivityStatusAnalysis(projectId: string, filters: DashboardFilters = {}) {
-  const activities = await prisma.scheduleActivity.findMany({ where: activityWhere(projectId, filters) });
+  const activityIds_raw = await prisma.scheduleActivity.findMany({
+    where: activityWhere(projectId, filters),
+    select: { activityId: true }
+  });
+  const ids = activityIds_raw.map((a) => a.activityId);
+
+  // Fetch all in parallel — 3 queries total regardless of activity count
+  const [activities, allActuals, allMatches] = await Promise.all([
+    prisma.scheduleActivity.findMany({ where: activityWhere(projectId, filters) }),
+    prisma.activityActual.findMany({
+      where: { activityId: { in: ids } },
+      orderBy: { verifiedAt: "desc" }
+    }),
+    prisma.aiActivityMatch.findMany({
+      where: { activityId: { in: ids } },
+      orderBy: { createdAt: "desc" }
+    })
+  ]);
+
+  // Build lookup maps for O(1) access
+  const latestActualMap = new Map<string, typeof allActuals[0]>();
+  for (const actual of allActuals) {
+    if (!latestActualMap.has(actual.activityId)) {
+      latestActualMap.set(actual.activityId, actual); // already ordered desc
+    }
+  }
+  const latestMatchMap = new Map<string, typeof allMatches[0]>();
+  for (const match of allMatches) {
+    if (match.activityId && !latestMatchMap.has(match.activityId)) {
+      latestMatchMap.set(match.activityId, match);
+    }
+  }
+
   const byStatus = {
     COMPLETED: activities.filter((a) => a.activityStatus === "COMPLETED").length,
     IN_PROGRESS: activities.filter((a) => a.activityStatus === "IN_PROGRESS").length,
@@ -105,69 +129,81 @@ export async function getActivityStatusAnalysis(projectId: string, filters: Dash
     NOT_STARTED: activities.filter((a) => a.activityStatus === "NOT_STARTED").length
   };
 
-  const rows = await Promise.all(
-    activities.map(async (a) => {
-      const latestActual = await prisma.activityActual.findFirst({
-        where: { activityId: a.activityId },
-        orderBy: { verifiedAt: "desc" }
-      });
-      const latestMatch = await prisma.aiActivityMatch.findFirst({
-        where: { activityId: a.activityId },
-        orderBy: { createdAt: "desc" }
-      });
-      return {
-        activityId: a.activityId,
-        activityName: a.activityName,
-        wbs: [a.wbsL1, a.wbsL2, a.wbsL3, a.wbsL4, a.wbsL5, a.wbsL6].filter(Boolean).join(" / "),
-        discipline: a.discipline,
-        area: a.area,
-        plannedFinish: a.plannedFinish,
-        actualFinish: latestActual?.actualFinish ?? null,
-        status: a.activityStatus,
-        progress: latestActual?.progressValue ?? null,
-        delayDays: latestActual?.delayDays ?? null,
-        latestConfidence: latestMatch?.overallConfidence ?? null
-      };
-    })
-  );
+  const rows = activities.map((a) => {
+    const latestActual = latestActualMap.get(a.activityId);
+    const latestMatch = latestMatchMap.get(a.activityId);
+    return {
+      activityId: a.activityId,
+      activityName: a.activityName,
+      wbs: [a.wbsL1, a.wbsL2, a.wbsL3, a.wbsL4, a.wbsL5, a.wbsL6].filter(Boolean).join(" / "),
+      discipline: a.discipline,
+      area: a.area,
+      plannedFinish: a.plannedFinish,
+      actualFinish: latestActual?.actualFinish ?? null,
+      status: a.activityStatus,
+      progress: latestActual?.progressValue ?? null,
+      delayDays: latestActual?.delayDays ?? null,
+      latestConfidence: latestMatch?.overallConfidence ?? null
+    };
+  });
 
   return { byStatus, rows };
 }
 
-const DISCIPLINES = ["CIVIL", "PIPING", "ELECTRICAL", "INSTRUMENTATION", "MECHANICAL", "HSE"];
-
+// ─── FIXED: was 18 queries, now 3 queries total ───────────────────────────────
 export async function getDisciplinePerformance(projectId: string) {
-  return Promise.all(
-    DISCIPLINES.map(async (discipline) => {
-      const activities = await prisma.scheduleActivity.findMany({ where: { projectId, discipline } });
-      const total = activities.length;
-      const completed = activities.filter((a) => a.activityStatus === "COMPLETED").length;
-      const delayed = activities.filter((a) => a.activityStatus === "DELAYED").length;
-
-      const matches = await prisma.aiActivityMatch.findMany({
-        where: { 
-          projectId,
-          activity: { discipline }
-        }
-      });
-      const pendingAudits = matches.filter((m) => m.decision === "FLAG_FOR_REVIEW").length;
-      const avgConfidence =
-        matches.length > 0
-          ? Math.round((matches.reduce((s, m) => s + m.overallConfidence, 0) / matches.length) * 10) / 10
-          : null;
-
-      const updateCount = await prisma.supervisorUpdate.count({ where: { projectId, discipline } });
-
-      return {
-        discipline,
-        progressPct: total > 0 ? Math.round((completed / total) * 1000) / 10 : 0,
-        delayedActivities: delayed,
-        pendingAudits,
-        avgConfidence,
-        updateCount
-      };
+  // Fetch all data in 3 parallel queries, aggregate in JS
+  const [activities, matches, updateCounts] = await Promise.all([
+    prisma.scheduleActivity.findMany({
+      where: { projectId },
+      select: { discipline: true, activityStatus: true }
+    }),
+    prisma.aiActivityMatch.findMany({
+      where: { projectId },
+      select: { decision: true, overallConfidence: true, activity: { select: { discipline: true } } }
+    }),
+    prisma.supervisorUpdate.groupBy({
+      by: ["discipline"],
+      where: { projectId },
+      _count: { _all: true }
     })
-  );
+  ]);
+
+  // Build discipline → update count map
+  const updateCountMap = new Map<string, number>();
+  for (const row of updateCounts) {
+    if (row.discipline) updateCountMap.set(row.discipline, row._count._all);
+  }
+
+  // Get unique disciplines from actual data + known defaults
+  const DISCIPLINES = ["CIVIL", "PIPING", "ELECTRICAL", "INSTRUMENTATION", "MECHANICAL", "HSE"];
+  const allDisciplines = Array.from(new Set([
+    ...DISCIPLINES,
+    ...activities.map((a) => a.discipline)
+  ]));
+
+  return allDisciplines.map((discipline) => {
+    const disc_activities = activities.filter((a) => a.discipline === discipline);
+    const total = disc_activities.length;
+    const completed = disc_activities.filter((a) => a.activityStatus === "COMPLETED").length;
+    const delayed = disc_activities.filter((a) => a.activityStatus === "DELAYED").length;
+
+    const disc_matches = matches.filter((m) => m.activity?.discipline === discipline);
+    const pendingAudits = disc_matches.filter((m) => m.decision === "FLAG_FOR_REVIEW").length;
+    const avgConfidence =
+      disc_matches.length > 0
+        ? Math.round((disc_matches.reduce((s, m) => s + m.overallConfidence, 0) / disc_matches.length) * 10) / 10
+        : null;
+
+    return {
+      discipline,
+      progressPct: total > 0 ? Math.round((completed / total) * 1000) / 10 : 0,
+      delayedActivities: delayed,
+      pendingAudits,
+      avgConfidence,
+      updateCount: updateCountMap.get(discipline) ?? 0
+    };
+  }).filter((d) => d.discipline); // remove any empty discipline entries
 }
 
 export async function getAiConfidenceAnalysis(projectId: string) {
@@ -206,7 +242,7 @@ export async function getAiConfidenceAnalysis(projectId: string) {
 export async function getDelayVarianceAnalysis(projectId: string) {
   const actuals = await prisma.activityActual.findMany({
     where: { activity: { projectId } },
-    include: { activity: true }
+    include: { activity: { select: { discipline: true } } }
   });
   const delayed = actuals.filter((a) => (a.delayDays ?? 0) > 0);
   const totalDelayDays = delayed.reduce((s, a) => s + (a.delayDays ?? 0), 0);
@@ -225,97 +261,124 @@ export async function getDelayVarianceAnalysis(projectId: string) {
     reasonCounts[matched ?? "Other"]++;
   }
 
-  return {
-    delayedActivitiesCount: delayed.length,
-    totalDelayDays,
-    delayDaysByDiscipline: byDiscipline,
-    delayReasonDistribution: reasonCounts
-  };
+  return { delayedActivitiesCount: delayed.length, totalDelayDays, delayDaysByDiscipline: byDiscipline, delayReasonDistribution: reasonCounts };
 }
 
+// ─── FIXED: was up to 2001 serial queries, now 5 queries total ───────────────
 export async function getCriticalAtRiskActivities(projectId: string) {
   const activities = await prisma.scheduleActivity.findMany({ where: { projectId } });
+  if (activities.length === 0) return [];
+
+  const activityIds = activities.map((a) => a.activityId);
+  const predecessorIds = activities.map((a) => a.predecessorId).filter(Boolean) as string[];
+  const disciplines = [...new Set(activities.map((a) => a.discipline))];
+
+  // 4 parallel batch queries instead of 4N serial queries
+  const [latestActuals, pendingAudits, predecessors, updateCounts] = await Promise.all([
+    // Latest actual per activity
+    prisma.activityActual.findMany({
+      where: { activityId: { in: activityIds } },
+      orderBy: { verifiedAt: "desc" },
+      distinct: ["activityId"],
+      select: { activityId: true, actualFinish: true }
+    }),
+    // All FLAG_FOR_REVIEW matches for this project
+    prisma.aiActivityMatch.findMany({
+      where: { activityId: { in: activityIds }, decision: "FLAG_FOR_REVIEW" },
+      select: { activityId: true }
+    }),
+    // All predecessor activities in one query
+    predecessorIds.length > 0
+      ? prisma.scheduleActivity.findMany({
+          where: { activityId: { in: predecessorIds } },
+          select: { activityId: true, activityStatus: true }
+        })
+      : Promise.resolve([]),
+    // Update count per discipline in one groupBy
+    prisma.supervisorUpdate.groupBy({
+      by: ["discipline"],
+      where: { projectId },
+      _count: { _all: true }
+    })
+  ]);
+
+  // Build O(1) lookup maps
+  const actualMap = new Map(latestActuals.map((a) => [a.activityId, a]));
+  const pendingAuditSet = new Set(pendingAudits.map((m) => m.activityId));
+  const predecessorMap = new Map(predecessors.map((p) => [p.activityId, p.activityStatus]));
+  const updateCountMap = new Map(updateCounts.map((u) => [u.discipline, u._count._all]));
+
   const now = new Date();
   const results = [];
 
   for (const a of activities) {
     const flags: string[] = [];
-    if (a.plannedFinish < now && a.activityStatus !== "COMPLETED") flags.push("Planned finish passed but not complete");
 
-    const latestActual = await prisma.activityActual.findFirst({
-      where: { activityId: a.activityId },
-      orderBy: { verifiedAt: "desc" }
-    });
+    if (a.plannedFinish < now && a.activityStatus !== "COMPLETED") {
+      flags.push("Planned finish passed but not complete");
+    }
+    const latestActual = actualMap.get(a.activityId);
     if (latestActual?.actualFinish && latestActual.actualFinish > a.plannedFinish) {
       flags.push("Actual finish later than planned");
     }
     if (a.predecessorId) {
-      const predecessor = await prisma.scheduleActivity.findUnique({ where: { activityId: a.predecessorId } });
-      if (predecessor && predecessor.activityStatus !== "COMPLETED") flags.push("Predecessor incomplete");
+      const predStatus = predecessorMap.get(a.predecessorId);
+      if (predStatus && predStatus !== "COMPLETED") flags.push("Predecessor incomplete");
     }
-    const pendingAudit = await prisma.aiActivityMatch.findFirst({
-      where: { activityId: a.activityId, decision: "FLAG_FOR_REVIEW" }
-    });
-    if (pendingAudit) flags.push("Pending AI audit");
+    if (pendingAuditSet.has(a.activityId)) flags.push("Pending AI audit");
     if (a.activityStatus === "DELAYED") flags.push("Status = DELAYED");
-
-    const updateCount = await prisma.supervisorUpdate.count({
-      where: { projectId, discipline: a.discipline }
-    });
-    if (updateCount === 0) flags.push("Low reporting coverage");
+    if ((updateCountMap.get(a.discipline) ?? 0) === 0) flags.push("Low reporting coverage");
 
     if (flags.length > 0) {
       results.push({ activityId: a.activityId, activityName: a.activityName, flags });
     }
   }
+
   return results;
 }
 
 export async function getSupervisorReportingAnalysis(projectId: string) {
-  const updates = await prisma.supervisorUpdate.findMany({ where: { projectId } });
+  const [updates, pendingInvalid, latestFeed] = await Promise.all([
+    prisma.supervisorUpdate.findMany({ where: { projectId } }),
+    // Combined count in one groupBy instead of 2 separate count queries
+    prisma.aiActivityMatch.groupBy({
+      by: ["decision", "matchStatus"],
+      where: { projectId },
+      _count: { _all: true }
+    }),
+    prisma.supervisorUpdate.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      take: 10
+    })
+  ]);
+
   const bySupervisor: Record<string, number> = {};
   const byDiscipline: Record<string, number> = {};
   const byArea: Record<string, number> = {};
   for (const u of updates) {
     bySupervisor[u.supervisorId] = (bySupervisor[u.supervisorId] ?? 0) + 1;
-    const d = u.discipline ?? "UNSPECIFIED";
-    byDiscipline[d] = (byDiscipline[d] ?? 0) + 1;
-    const a = u.areaUnit ?? "UNSPECIFIED";
-    byArea[a] = (byArea[a] ?? 0) + 1;
+    byDiscipline[u.discipline ?? "UNSPECIFIED"] = (byDiscipline[u.discipline ?? "UNSPECIFIED"] ?? 0) + 1;
+    byArea[u.areaUnit ?? "UNSPECIFIED"] = (byArea[u.areaUnit ?? "UNSPECIFIED"] ?? 0) + 1;
   }
 
-  const pending = await prisma.aiActivityMatch.count({
-    where: { projectId, decision: "FLAG_FOR_REVIEW" }
-  });
-  const invalid = await prisma.aiActivityMatch.count({
-    where: { projectId, matchStatus: "INVALID" }
-  });
+  const pending = pendingInvalid.find((r) => r.decision === "FLAG_FOR_REVIEW")?._count._all ?? 0;
+  const invalid = pendingInvalid.find((r) => r.matchStatus === "INVALID")?._count._all ?? 0;
 
-  const latestFeed = await prisma.supervisorUpdate.findMany({
-    where: { projectId },
-    orderBy: { createdAt: "desc" },
-    take: 10
-  });
-
-  return {
-    totalUpdates: updates.length,
-    bySupervisor,
-    byDiscipline,
-    byArea,
-    pendingUpdates: pending,
-    invalidUpdates: invalid,
-    latestFeed
-  };
+  return { totalUpdates: updates.length, bySupervisor, byDiscipline, byArea, pendingUpdates: pending, invalidUpdates: invalid, latestFeed };
 }
 
 export async function getInstitutionalMemorySnapshot(projectId: string) {
-  const verifiedCount = await prisma.activityActual.count({ where: { activity: { projectId } } });
-  const lessonCount = await prisma.lessonLearned.count({ where: { projectId, approved: true } });
-  const lessons = await prisma.lessonLearned.findMany({ where: { projectId, approved: true } });
+  // Removed redundant count query — use lessons.length instead
+  const [verifiedCount, lessons] = await Promise.all([
+    prisma.activityActual.count({ where: { activity: { projectId } } }),
+    prisma.lessonLearned.findMany({ where: { projectId, approved: true } })
+  ]);
+
   const reasonCounts: Record<string, number> = {};
   for (const l of lessons) {
     if (!l.delayReason) continue;
     reasonCounts[l.delayReason] = (reasonCounts[l.delayReason] ?? 0) + 1;
   }
-  return { verifiedRecordCount: verifiedCount, lessonCount, commonDelayReasons: reasonCounts };
+  return { verifiedRecordCount: verifiedCount, lessonCount: lessons.length, commonDelayReasons: reasonCounts };
 }
