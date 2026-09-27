@@ -17,11 +17,13 @@ function withLocalCors(response: NextResponse, request: NextRequest): NextRespon
 }
 
 function requiredRole(pathname: string): Role | null {
-  if (pathname.startsWith("/api/supervisor")) return "SUPERVISOR";
+  if (pathname.startsWith("/api/supervisor") || pathname.startsWith("/supervisor")) return "SUPERVISOR";
   if (
     pathname.startsWith("/api/audit") ||
     pathname.startsWith("/api/institutional-memory") ||
-    pathname.startsWith("/api/projects/import") ||
+    pathname.startsWith("/api/projects") ||
+    pathname.startsWith("/api/dashboard") ||
+    pathname.startsWith("/api/templates") ||
     pathname.startsWith("/pm")
   ) return "MANAGER";
   return null;
@@ -29,16 +31,49 @@ function requiredRole(pathname: string): Role | null {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  
-  // Allow CORS preflight requests
+
+  // Always allow login/logout routes
+  if (pathname === "/api/auth/login" || pathname === "/api/auth/logout" || pathname === "/login") {
+    return NextResponse.next();
+  }
+
+  // Handle CORS preflight
   if (pathname.startsWith("/api/") && request.method === "OPTIONS") {
     return withLocalCors(new NextResponse(null, { status: 204 }), request);
   }
 
-  // Authentication is disabled - allow all requests to proceed
+  // Check bearer token (Flutter mobile client)
+  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  const apiKey = process.env.AUTH_API_KEY;
+
+  // Verify session cookie
+  let session = await verifySession(request.cookies.get("infrasync_session")?.value);
+
+  // Fallback to API key for mobile/Flutter client
+  if (!session && apiKey && bearer && bearer === apiKey) {
+    session = { username: "api-client", role: (process.env.AUTH_API_ROLE as Role) || "SUPERVISOR", expiresAt: Date.now() + 60_000 };
+  }
+
+  // Not authenticated
+  if (!session) {
+    if (pathname.startsWith("/api/")) {
+      return withLocalCors(NextResponse.json({ error: "Authentication required" }, { status: 401 }), request);
+    }
+    return NextResponse.redirect(new URL("/login", request.url));
+  }
+
+  // Check role
+  const required = requiredRole(pathname);
+  if (required && !roleAtLeast(session.role, required)) {
+    if (pathname.startsWith("/api/")) {
+      return withLocalCors(NextResponse.json({ error: "Insufficient permissions" }, { status: 403 }), request);
+    }
+    return NextResponse.redirect(new URL("/login", request.url));
+  }
+
   return withLocalCors(NextResponse.next(), request);
 }
 
 export const config = {
-  matcher: ["/api/:path*", "/pm/:path*", "/supervisor/:path*"]
+  matcher: ["/api/:path*", "/pm/:path*", "/supervisor/:path*", "/login"]
 };

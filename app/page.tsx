@@ -6,7 +6,7 @@ export default function LandingPage() {
   const router = useRouter();
 
   function enterApp() {
-    router.push("/pm");
+    router.push("/login");
   }
 
   return (

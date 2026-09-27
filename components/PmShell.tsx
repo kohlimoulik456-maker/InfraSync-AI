@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { LayoutGrid, FolderPlus, ClipboardCheck, BookOpen, UserCircle2, PlayCircle, HardHat } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { LayoutGrid, FolderPlus, ClipboardCheck, BookOpen, UserCircle2, PlayCircle, HardHat, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -15,12 +15,19 @@ const NAV = [
 
 export function PmShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="border-b border-slate-100 bg-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 sm:py-4">
-          <Link href="/" className="flex shrink-0 items-center gap-2">
+          <Link href="/pm" className="flex shrink-0 items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-md bg-navy-700 text-sm font-bold text-white">
               IS
             </div>
@@ -31,8 +38,18 @@ export function PmShell({ children }: { children: React.ReactNode }) {
               <HardHat size={16} />
               <span className="hidden sm:inline">Supervisor View</span>
             </Link>
-            <UserCircle2 size={20} />
-            <span className="hidden sm:inline">Program Manager (Demo)</span>
+            <div className="flex items-center gap-1.5">
+              <UserCircle2 size={18} />
+              <span className="hidden sm:inline text-slate-600 font-medium">Program Manager</span>
+            </div>
+            <button
+              onClick={logout}
+              className="flex items-center gap-1.5 text-slate-400 hover:text-danger-500 transition"
+              title="Sign out"
+            >
+              <LogOut size={16} />
+              <span className="hidden sm:inline text-xs">Sign out</span>
+            </button>
           </div>
         </div>
         <nav className="overflow-x-auto">
