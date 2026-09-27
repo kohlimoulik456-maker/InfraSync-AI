@@ -21,11 +21,12 @@ function requiredRole(pathname: string): Role | null {
   if (
     pathname.startsWith("/api/audit") ||
     pathname.startsWith("/api/institutional-memory") ||
-    pathname.startsWith("/api/projects") ||
+    pathname.startsWith("/api/projects/import") ||
     pathname.startsWith("/api/dashboard") ||
     pathname.startsWith("/api/templates") ||
     pathname.startsWith("/pm")
   ) return "MANAGER";
+  // /api/projects (GET list) is accessible to all authenticated users including supervisors
   return null;
 }
 
