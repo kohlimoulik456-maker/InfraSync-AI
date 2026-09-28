@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "test": "tsx --test tests/*.test.ts",
     "start": "next start",
     "lint": "next lint",
     "postinstall": "prisma generate",

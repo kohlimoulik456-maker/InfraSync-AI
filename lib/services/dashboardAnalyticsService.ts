@@ -271,11 +271,10 @@ export async function getCriticalAtRiskActivities(projectId: string) {
   if (activities.length === 0) return [];
 
   const activityIds = activities.map((a) => a.activityId);
-  const predecessorIds = activities.map((a) => a.predecessorId).filter(Boolean) as string[];
   const disciplines = [...new Set(activities.map((a) => a.discipline))];
 
   // 4 parallel batch queries instead of 4N serial queries
-  const [latestActuals, pendingAudits, predecessors, updateCounts] = await Promise.all([
+  const [latestActuals, pendingAudits, dependencies, updateCounts] = await Promise.all([
     // Latest actual per activity
     prisma.activityActual.findMany({
       where: { activityId: { in: activityIds } },
@@ -288,13 +287,10 @@ export async function getCriticalAtRiskActivities(projectId: string) {
       where: { activityId: { in: activityIds }, decision: "FLAG_FOR_REVIEW" },
       select: { activityId: true }
     }),
-    // All predecessor activities in one query
-    predecessorIds.length > 0
-      ? prisma.scheduleActivity.findMany({
-          where: { activityId: { in: predecessorIds }, isCurrentSchedule: true },
-          select: { activityId: true, activityStatus: true }
-        })
-      : Promise.resolve([]),
+    prisma.scheduleDependency.findMany({
+      where: { projectId, successorActivityId: { in: activityIds } },
+      select: { predecessorActivityId: true, successorActivityId: true }
+    }),
     // Update count per discipline in one groupBy
     prisma.supervisorUpdate.groupBy({
       by: ["discipline"],
@@ -303,10 +299,24 @@ export async function getCriticalAtRiskActivities(projectId: string) {
     })
   ]);
 
+  const predecessorIds = [...new Set(dependencies.map((dependency) => dependency.predecessorActivityId))];
+  const predecessors = predecessorIds.length > 0
+    ? await prisma.scheduleActivity.findMany({
+        where: { projectId, activityId: { in: predecessorIds }, isCurrentSchedule: true },
+        select: { activityId: true, activityStatus: true }
+      })
+    : [];
+
   // Build O(1) lookup maps
   const actualMap = new Map(latestActuals.map((a) => [a.activityId, a]));
   const pendingAuditSet = new Set(pendingAudits.map((m) => m.activityId));
   const predecessorMap = new Map(predecessors.map((p) => [p.activityId, p.activityStatus]));
+  const dependencyMap = new Map<string, string[]>();
+  for (const dependency of dependencies) {
+    const predecessorsForActivity = dependencyMap.get(dependency.successorActivityId) ?? [];
+    predecessorsForActivity.push(dependency.predecessorActivityId);
+    dependencyMap.set(dependency.successorActivityId, predecessorsForActivity);
+  }
   const updateCountMap = new Map(updateCounts.map((u) => [u.discipline, u._count._all]));
 
   const now = new Date();
@@ -322,9 +332,8 @@ export async function getCriticalAtRiskActivities(projectId: string) {
     if (latestActual?.actualFinish && latestActual.actualFinish > a.plannedFinish) {
       flags.push("Actual finish later than planned");
     }
-    if (a.predecessorId) {
-      const predStatus = predecessorMap.get(a.predecessorId);
-      if (predStatus && predStatus !== "COMPLETED") flags.push("Predecessor incomplete");
+    if ((dependencyMap.get(a.activityId) ?? []).some((predecessorId) => predecessorMap.get(predecessorId) !== "COMPLETED")) {
+      flags.push("Predecessor incomplete");
     }
     if (pendingAuditSet.has(a.activityId)) flags.push("Pending AI audit");
     if (a.activityStatus === "DELAYED") flags.push("Status = DELAYED");

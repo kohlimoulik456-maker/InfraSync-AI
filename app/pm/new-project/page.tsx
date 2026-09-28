@@ -115,6 +115,9 @@ export default function NewProjectPage() {
             <p className="mb-2 text-xs text-slate-500">
               For this MVP, import the schedule as Excel or CSV. Primavera XER/XML parsing and direct P6 API synchronization are future enhancements.
             </p>
+            <p className="mb-2 text-xs text-slate-500">
+              WBS_L1–WBS_L6 are imported as a tree; optional WBS_Code_L1–L6 values keep same-named nodes distinct. Use Predecessors for multiple links, separated by semicolons, such as ACT-01:FS:0; ACT-02:SS:2. Types: FS, SS, FF, SF; lag is in days.
+            </p>
             <div className="flex items-center gap-3 rounded-lg border border-dashed border-slate-300 p-4">
               <FileSpreadsheet size={22} className="text-slate-400" />
               <div className="flex-1 text-sm">

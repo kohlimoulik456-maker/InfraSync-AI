@@ -125,7 +125,7 @@ export default function ScheduleVersionsPage() {
             onChange={(event) => setFile(event.target.files?.[0] ?? null)}
             className="input-field text-sm"
           />
-          <p className="mt-1 text-xs text-slate-500">This creates an inactive version; it does not replace the current schedule.</p>
+          <p className="mt-1 text-xs text-slate-500">This creates an inactive version; it does not replace the current schedule. Optional WBS codes distinguish same-named nodes. Use semicolon-separated links such as ACT-01:FS:0; ACT-02:SS:2 (lag in days).</p>
         </div>
         <button type="submit" disabled={submitting || !file} className="btn-primary">
           <FileUp size={15} /> {submitting ? "Staging…" : "Stage revision"}

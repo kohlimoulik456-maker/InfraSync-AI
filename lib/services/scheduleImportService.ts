@@ -1,6 +1,8 @@
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../prisma";
+import { buildWbsTree, hasDependencyCycle, parsePredecessors, type ScheduleDependencyType } from "./scheduleLogic";
 
 export const SCHEDULE_TEMPLATE_HEADERS = [
   "Project_ID",
@@ -20,7 +22,14 @@ export const SCHEDULE_TEMPLATE_HEADERS = [
   "Planned_Duration_Days",
   "Predecessor_ID",
   "Contractor",
-  "Field_Keywords"
+  "Field_Keywords",
+  "Predecessors",
+  "WBS_Code_L1",
+  "WBS_Code_L2",
+  "WBS_Code_L3",
+  "WBS_Code_L4",
+  "WBS_Code_L5",
+  "WBS_Code_L6"
 ] as const;
 
 const REQUIRED_HEADERS = [
@@ -82,6 +91,57 @@ interface PreparedSchedule {
   headerErrors: string[];
   summary: ScheduleImportSummary;
   validRows: any[];
+  dependencies: {
+    predecessorActivityId: string;
+    successorActivityId: string;
+    dependencyType: ScheduleDependencyType;
+    lagDays: number;
+  }[];
+}
+
+type ScheduleDependency = PreparedSchedule["dependencies"][number];
+
+async function createWbsNodes(
+  tx: Prisma.TransactionClient,
+  projectId: string,
+  scheduleVersionId: string,
+  rows: any[]
+): Promise<Map<string, string>> {
+  const tree = buildWbsTree(rows.map((row) => ({
+    activityId: row.activityId,
+    path: [1, 2, 3, 4, 5, 6].map((level) => ({
+      name: row[`wbsL${level}`],
+      code: row[`wbsCodeL${level}`]
+    }))
+  })));
+
+  const nodeIds = new Map<string, string>();
+  const nodesByLevel = new Map<number, typeof tree.nodes>();
+  for (const node of tree.nodes) {
+    if (!nodesByLevel.has(node.level)) nodesByLevel.set(node.level, []);
+    nodesByLevel.get(node.level)!.push(node);
+  }
+  for (const [level, nodes] of [...nodesByLevel.entries()].sort(([left], [right]) => left - right)) {
+    const created = await tx.wbsNode.createManyAndReturn({
+      data: nodes.map((node) => ({
+        projectId,
+        scheduleVersionId,
+        parentId: node.parentKey ? nodeIds.get(node.parentKey) : null,
+        nodeKey: node.nodeKey,
+        code: node.code,
+        name: node.name,
+        level,
+        sortOrder: node.sortOrder
+      })),
+      select: { nodeKey: true, wbsNodeId: true }
+    });
+    for (const node of created) nodeIds.set(node.nodeKey, node.wbsNodeId);
+  }
+
+  return new Map([...tree.activityNodeKeys.entries()].flatMap(([activityId, nodeKey]) => {
+    const nodeId = nodeIds.get(nodeKey);
+    return nodeId ? [[activityId, nodeId] as const] : [];
+  }));
 }
 
 async function prepareScheduleImport(buffer: Buffer, filename: string, projectId: string): Promise<PreparedSchedule> {
@@ -98,7 +158,8 @@ async function prepareScheduleImport(buffer: Buffer, filename: string, projectId
         disciplinesDetected: [],
         rejections: []
       },
-      validRows: []
+      validRows: [],
+      dependencies: []
     };
   }
 
@@ -107,6 +168,8 @@ async function prepareScheduleImport(buffer: Buffer, filename: string, projectId
   const duplicates = new Set<string>();
   const disciplines = new Set<string>();
   const validRows: any[] = [];
+  const dependencies: ScheduleDependency[] = [];
+  const rowByActivityId = new Map<string, number>();
 
   rows.forEach((raw, idx) => {
     const rowIndex = idx + 1;
@@ -156,12 +219,24 @@ async function prepareScheduleImport(buffer: Buffer, filename: string, projectId
       plannedDuration = daysBetween(plannedFinish, plannedStart);
     }
 
+    const parsedDependencies = parsePredecessors(raw.Predecessors, raw.Predecessor_ID);
+    if (parsedDependencies.error) {
+      rejections.push({ rowIndex, activityId, reason: parsedDependencies.error });
+      return;
+    }
+    if (parsedDependencies.dependencies.some((dependency) => dependency.predecessorActivityId === activityId)) {
+      rejections.push({ rowIndex, activityId, reason: "An activity cannot depend on itself." });
+      return;
+    }
+
     seenActivityIds.add(activityId);
+    rowByActivityId.set(activityId, rowIndex);
     disciplines.add(discipline);
 
     const area = raw.Area_Unit ? String(raw.Area_Unit).trim() : null;
     const fieldKeywords = raw.Field_Keywords ? String(raw.Field_Keywords).trim() : null;
-    const wbs = [raw.WBS_L1, raw.WBS_L2, raw.WBS_L3, raw.WBS_L4, raw.WBS_L5, raw.WBS_L6]
+    const wbs = [raw.WBS_L1, raw.WBS_L2, raw.WBS_L3, raw.WBS_L4, raw.WBS_L5, raw.WBS_L6,
+      raw.WBS_Code_L1, raw.WBS_Code_L2, raw.WBS_Code_L3, raw.WBS_Code_L4, raw.WBS_Code_L5, raw.WBS_Code_L6]
       .filter(Boolean)
       .join(" ");
     const normalizedSearchText = [activityName, discipline, area ?? "", wbs, fieldKeywords ?? ""]
@@ -179,37 +254,111 @@ async function prepareScheduleImport(buffer: Buffer, filename: string, projectId
       wbsL4: raw.WBS_L4 ? String(raw.WBS_L4) : null,
       wbsL5: raw.WBS_L5 ? String(raw.WBS_L5) : null,
       wbsL6: raw.WBS_L6 ? String(raw.WBS_L6) : null,
+      wbsCodeL1: raw.WBS_Code_L1 ? String(raw.WBS_Code_L1).trim() : null,
+      wbsCodeL2: raw.WBS_Code_L2 ? String(raw.WBS_Code_L2).trim() : null,
+      wbsCodeL3: raw.WBS_Code_L3 ? String(raw.WBS_Code_L3).trim() : null,
+      wbsCodeL4: raw.WBS_Code_L4 ? String(raw.WBS_Code_L4).trim() : null,
+      wbsCodeL5: raw.WBS_Code_L5 ? String(raw.WBS_Code_L5).trim() : null,
+      wbsCodeL6: raw.WBS_Code_L6 ? String(raw.WBS_Code_L6).trim() : null,
       discipline,
       area: area ?? "",
       plannedStart,
       plannedFinish,
       plannedDuration,
-      predecessorId: raw.Predecessor_ID ? String(raw.Predecessor_ID).trim() : null,
+      predecessorId: parsedDependencies.dependencies[0]?.predecessorActivityId ?? null,
       contractor: raw.Contractor ? String(raw.Contractor).trim() : null,
       fieldKeywords,
       normalizedSearchText,
       activityStatus: "NOT_STARTED" as const
     });
+    for (const dependency of parsedDependencies.dependencies) {
+      dependencies.push({ ...dependency, successorActivityId: activityId });
+    }
   });
+
+  const invalidActivityIds = new Set<string>();
+  const activityIds = new Set(validRows.map((row) => row.activityId));
+  for (const dependency of dependencies) {
+    if (!activityIds.has(dependency.predecessorActivityId)) {
+      invalidActivityIds.add(dependency.successorActivityId);
+      rejections.push({
+        rowIndex: rowByActivityId.get(dependency.successorActivityId) ?? 0,
+        activityId: dependency.successorActivityId,
+        reason: `Predecessor "${dependency.predecessorActivityId}" is not present in this schedule version.`
+      });
+    }
+  }
+
+  const graphActivityIds = [...activityIds].filter((activityId) => !invalidActivityIds.has(activityId));
+  const indegree = new Map(graphActivityIds.map((activityId) => [activityId, 0]));
+  const successors = new Map(graphActivityIds.map((activityId) => [activityId, [] as string[]]));
+  for (const dependency of dependencies) {
+    if (invalidActivityIds.has(dependency.successorActivityId) || invalidActivityIds.has(dependency.predecessorActivityId)) continue;
+    successors.get(dependency.predecessorActivityId)?.push(dependency.successorActivityId);
+    indegree.set(dependency.successorActivityId, (indegree.get(dependency.successorActivityId) ?? 0) + 1);
+  }
+  const ready = graphActivityIds.filter((activityId) => indegree.get(activityId) === 0);
+  for (let index = 0; index < ready.length; index++) {
+    const activityId = ready[index];
+    for (const successorId of successors.get(activityId) ?? []) {
+      const remaining = (indegree.get(successorId) ?? 0) - 1;
+      indegree.set(successorId, remaining);
+      if (remaining === 0) ready.push(successorId);
+    }
+  }
+  for (const [activityId, remaining] of indegree) {
+    if (remaining > 0) {
+      invalidActivityIds.add(activityId);
+      rejections.push({ rowIndex: rowByActivityId.get(activityId) ?? 0, activityId, reason: "Dependency graph contains a cycle." });
+    }
+  }
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const dependency of dependencies) {
+      if (invalidActivityIds.has(dependency.predecessorActivityId) && !invalidActivityIds.has(dependency.successorActivityId)) {
+        invalidActivityIds.add(dependency.successorActivityId);
+        rejections.push({ rowIndex: rowByActivityId.get(dependency.successorActivityId) ?? 0, activityId: dependency.successorActivityId, reason: "A predecessor activity was rejected." });
+        changed = true;
+      }
+    }
+  }
+
+  const acceptedRows = validRows.filter((row) => !invalidActivityIds.has(row.activityId));
+  const acceptedActivityIds = new Set(acceptedRows.map((row) => row.activityId));
+  const acceptedDependencies = dependencies.filter((dependency) =>
+    acceptedActivityIds.has(dependency.predecessorActivityId) && acceptedActivityIds.has(dependency.successorActivityId)
+  );
 
   return {
     headerErrors: [],
     summary: {
       totalRows: rows.length,
-      imported: validRows.length,
-      rejected: rejections.length,
+      imported: acceptedRows.length,
+      rejected: rows.length - acceptedRows.length,
       duplicateActivityIds: Array.from(duplicates),
       disciplinesDetected: Array.from(disciplines),
       rejections
     },
-    validRows
+    validRows: acceptedRows,
+    dependencies: acceptedDependencies
   };
 }
 
-function toVersionActivity(row: any, scheduleVersionId: string) {
-  const { projectId: importedProjectId, ...activity } = row;
+function toVersionActivity(row: any, scheduleVersionId: string, wbsNodeId?: string) {
+  const {
+    projectId: importedProjectId,
+    wbsCodeL1: _wbsCodeL1,
+    wbsCodeL2: _wbsCodeL2,
+    wbsCodeL3: _wbsCodeL3,
+    wbsCodeL4: _wbsCodeL4,
+    wbsCodeL5: _wbsCodeL5,
+    wbsCodeL6: _wbsCodeL6,
+    ...activity
+  } = row;
   void importedProjectId;
-  return { ...activity, scheduleVersionId };
+  return { ...activity, scheduleVersionId, wbsNodeId: wbsNodeId ?? null };
 }
 
 export async function importSchedule(
@@ -253,14 +402,38 @@ export async function importSchedule(
       }
     });
     scheduleVersionId = version.scheduleVersionId;
+    const wbsNodeIds = await createWbsNodes(tx, formProjectId, scheduleVersionId, validRows);
 
     if (validRows.length > 0) {
       await tx.scheduleVersionActivity.createMany({
-        data: validRows.map((row) => toVersionActivity(row, scheduleVersionId))
+        data: validRows.map((row) => toVersionActivity(row, scheduleVersionId, wbsNodeIds.get(row.activityId)))
+      });
+    }
+    if (prepared.dependencies.length > 0) {
+      await tx.scheduleVersionDependency.createMany({
+        data: prepared.dependencies.map((dependency) => ({ ...dependency, scheduleVersionId }))
       });
     }
     if (validRows.length > 0 && summary.imported > 0 && summary.rejected === 0) {
-      await tx.scheduleActivity.createMany({ data: validRows });
+      await tx.scheduleActivity.createMany({
+        data: validRows.map((row) => {
+          const {
+            wbsCodeL1: _wbsCodeL1,
+            wbsCodeL2: _wbsCodeL2,
+            wbsCodeL3: _wbsCodeL3,
+            wbsCodeL4: _wbsCodeL4,
+            wbsCodeL5: _wbsCodeL5,
+            wbsCodeL6: _wbsCodeL6,
+            ...activity
+          } = row;
+          return { ...activity, wbsNodeId: wbsNodeIds.get(row.activityId) ?? null };
+        })
+      });
+      if (prepared.dependencies.length > 0) {
+        await tx.scheduleDependency.createMany({
+          data: prepared.dependencies.map((dependency) => ({ ...dependency, projectId: formProjectId }))
+        });
+      }
     }
   });
 
@@ -300,10 +473,16 @@ export async function stageScheduleRevision(
         validatedAt: prepared.summary.imported > 0 && prepared.summary.rejected === 0 ? new Date() : null
       }
     });
+    const wbsNodeIds = await createWbsNodes(tx, projectId, scheduleVersion.scheduleVersionId, prepared.validRows);
 
     if (prepared.validRows.length > 0) {
       await tx.scheduleVersionActivity.createMany({
-        data: prepared.validRows.map((row) => toVersionActivity(row, scheduleVersion.scheduleVersionId))
+        data: prepared.validRows.map((row) => toVersionActivity(row, scheduleVersion.scheduleVersionId, wbsNodeIds.get(row.activityId)))
+      });
+    }
+    if (prepared.dependencies.length > 0) {
+      await tx.scheduleVersionDependency.createMany({
+        data: prepared.dependencies.map((dependency) => ({ ...dependency, scheduleVersionId: scheduleVersion.scheduleVersionId }))
       });
     }
     return scheduleVersion;
@@ -318,13 +497,24 @@ export async function activateScheduleVersion(projectId: string, scheduleVersion
 
     const version = await tx.scheduleVersion.findFirst({
       where: { projectId, scheduleVersionId },
-      include: { activities: true }
+      include: { activities: true, dependencies: true }
     });
     if (!version) throw new Error("Schedule version not found.");
     if (version.status !== "VALIDATED" || version.rejectedRows > 0) {
       throw new Error("Only a fully validated schedule version can be approved.");
     }
     if (version.activities.length === 0) throw new Error("A schedule version must contain at least one activity.");
+
+    const versionActivityIds = new Set(version.activities.map((activity) => activity.activityId));
+    const invalidDependency = version.dependencies.find((dependency) =>
+      dependency.predecessorActivityId === dependency.successorActivityId ||
+      !versionActivityIds.has(dependency.predecessorActivityId) ||
+      !versionActivityIds.has(dependency.successorActivityId)
+    );
+    if (invalidDependency) throw new Error("Every schedule dependency must connect two different activities in the version.");
+    if (hasDependencyCycle([...versionActivityIds], version.dependencies)) {
+      throw new Error("The schedule dependency graph contains a cycle and cannot be activated.");
+    }
 
     const conflictingIds = await tx.scheduleActivity.findMany({
       where: {
@@ -348,17 +538,17 @@ export async function activateScheduleVersion(projectId: string, scheduleVersion
       INSERT INTO "scheduleActivity" (
         "activityId", "projectId", "activityName", "discipline", "area", "contractor",
         "wbsL1", "wbsL2", "wbsL3", "wbsL4", "wbsL5", "wbsL6", "plannedStart", "plannedFinish",
-        "plannedDuration", "activityStatus", "isCurrentSchedule", "predecessorId", "fieldKeywords", "normalizedSearchText"
+        "plannedDuration", "activityStatus", "isCurrentSchedule", "wbsNodeId", "predecessorId", "fieldKeywords", "normalizedSearchText"
       )
       SELECT incoming."activityId", ${projectId}, incoming."activityName", incoming."discipline", incoming."area", incoming."contractor",
         incoming."wbsL1", incoming."wbsL2", incoming."wbsL3", incoming."wbsL4", incoming."wbsL5", incoming."wbsL6",
-        incoming."plannedStart", incoming."plannedFinish", incoming."plannedDuration", incoming."activityStatus", true,
+        incoming."plannedStart", incoming."plannedFinish", incoming."plannedDuration", incoming."activityStatus", true, incoming."wbsNodeId",
         incoming."predecessorId", incoming."fieldKeywords", incoming."normalizedSearchText"
       FROM jsonb_to_recordset(${serializedActivities}::jsonb) AS incoming(
         "activityId" text, "activityName" text, "discipline" text, "area" text, "contractor" text,
         "wbsL1" text, "wbsL2" text, "wbsL3" text, "wbsL4" text, "wbsL5" text, "wbsL6" text,
         "plannedStart" timestamp, "plannedFinish" timestamp, "plannedDuration" integer, "activityStatus" text,
-        "predecessorId" text, "fieldKeywords" text, "normalizedSearchText" text
+        "wbsNodeId" text, "predecessorId" text, "fieldKeywords" text, "normalizedSearchText" text
       )
       ON CONFLICT ("activityId") DO UPDATE SET
         "activityName" = EXCLUDED."activityName",
@@ -374,6 +564,7 @@ export async function activateScheduleVersion(projectId: string, scheduleVersion
         "plannedStart" = EXCLUDED."plannedStart",
         "plannedFinish" = EXCLUDED."plannedFinish",
         "plannedDuration" = EXCLUDED."plannedDuration",
+        "wbsNodeId" = EXCLUDED."wbsNodeId",
         "predecessorId" = EXCLUDED."predecessorId",
         "fieldKeywords" = EXCLUDED."fieldKeywords",
         "normalizedSearchText" = EXCLUDED."normalizedSearchText",
@@ -388,6 +579,18 @@ export async function activateScheduleVersion(projectId: string, scheduleVersion
       },
       data: { isCurrentSchedule: false }
     });
+    await tx.scheduleDependency.deleteMany({ where: { projectId } });
+    if (version.dependencies.length > 0) {
+      await tx.scheduleDependency.createMany({
+        data: version.dependencies.map((dependency) => ({
+          projectId,
+          predecessorActivityId: dependency.predecessorActivityId,
+          successorActivityId: dependency.successorActivityId,
+          dependencyType: dependency.dependencyType,
+          lagDays: dependency.lagDays
+        }))
+      });
+    }
     await tx.scheduleVersion.updateMany({
       where: { projectId, status: "CURRENT" },
       data: { status: "SUPERSEDED" }

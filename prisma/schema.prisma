@@ -17,6 +17,13 @@ enum ScheduleVersionStatus {
   REJECTED
 }
 
+enum DependencyType {
+  FINISH_TO_START
+  START_TO_START
+  FINISH_TO_FINISH
+  START_TO_FINISH
+}
+
 // ─────────────────────────────────────────────
 // Core project
 // ─────────────────────────────────────────────
@@ -30,6 +37,8 @@ model project {
   lessonsLearned    lessonLearned[]
   fundTransactions  fundTransaction[]
   scheduleVersions  scheduleVersion[]
+  scheduleDependencies scheduleDependency[]
+  wbsNodes          wbsNode[]
 }
 
 model scheduleVersion {
@@ -50,6 +59,8 @@ model scheduleVersion {
 
   project    project                  @relation(fields: [projectId], references: [projectId], onDelete: Cascade)
   activities scheduleVersionActivity[]
+  wbsNodes   wbsNode[]
+  dependencies scheduleVersionDependency[]
 
   @@unique([projectId, versionNumber])
   @@index([projectId, status])
@@ -95,6 +106,7 @@ model scheduleActivity {
   plannedDuration Int?    // days (can be computed or stored)
   activityStatus String   // COMPLETED | IN_PROGRESS | DELAYED | NOT_STARTED
   isCurrentSchedule Boolean @default(true)
+  wbsNodeId      String?
   predecessorId  String?
   fieldKeywords  String?
   normalizedSearchText String @default("")
@@ -104,9 +116,72 @@ model scheduleActivity {
   aiMatches        aiActivityMatch[]
   supervisorUpdates supervisorUpdate[]
   lessonsLearned   lessonLearned[]
+  wbsNode          wbsNode? @relation(fields: [wbsNodeId], references: [wbsNodeId], onDelete: SetNull)
+  outgoingDependencies scheduleDependency[] @relation("DependencyPredecessor")
+  incomingDependencies scheduleDependency[] @relation("DependencySuccessor")
 
   @@index([projectId, activityStatus])
   @@index([projectId, isCurrentSchedule])
+  @@index([wbsNodeId])
+  @@unique([projectId, activityId])
+}
+
+model wbsNode {
+  wbsNodeId         String   @id @default(uuid())
+  projectId         String
+  scheduleVersionId String
+  parentId          String?
+  nodeKey           String
+  code              String?
+  name              String
+  level             Int
+  sortOrder         Int      @default(0)
+
+  project          project                   @relation(fields: [projectId], references: [projectId], onDelete: Cascade)
+  scheduleVersion  scheduleVersion           @relation(fields: [scheduleVersionId], references: [scheduleVersionId], onDelete: Cascade)
+  parent           wbsNode?                  @relation("WbsTree", fields: [parentId], references: [wbsNodeId], onDelete: SetNull)
+  children         wbsNode[]                 @relation("WbsTree")
+  activities       scheduleActivity[]
+  versionActivities scheduleVersionActivity[]
+
+  @@unique([scheduleVersionId, nodeKey])
+  @@unique([scheduleVersionId, code])
+  @@index([scheduleVersionId, parentId, sortOrder])
+  @@index([projectId])
+}
+
+model scheduleDependency {
+  dependencyId          String         @id @default(uuid())
+  projectId             String
+  predecessorActivityId String
+  successorActivityId   String
+  dependencyType        DependencyType @default(FINISH_TO_START)
+  lagDays               Int            @default(0)
+
+  project     project          @relation(fields: [projectId], references: [projectId], onDelete: Cascade)
+  predecessor scheduleActivity @relation("DependencyPredecessor", fields: [projectId, predecessorActivityId], references: [projectId, activityId], onDelete: Cascade)
+  successor   scheduleActivity @relation("DependencySuccessor", fields: [projectId, successorActivityId], references: [projectId, activityId], onDelete: Cascade)
+
+  @@unique([projectId, predecessorActivityId, successorActivityId, dependencyType])
+  @@index([projectId, predecessorActivityId])
+  @@index([projectId, successorActivityId])
+}
+
+model scheduleVersionDependency {
+  scheduleVersionDependencyId String         @id @default(uuid())
+  scheduleVersionId           String
+  predecessorActivityId       String
+  successorActivityId         String
+  dependencyType              DependencyType @default(FINISH_TO_START)
+  lagDays                     Int            @default(0)
+
+  scheduleVersion scheduleVersion @relation(fields: [scheduleVersionId], references: [scheduleVersionId], onDelete: Cascade)
+  predecessor scheduleVersionActivity @relation("VersionDependencyPredecessor", fields: [scheduleVersionId, predecessorActivityId], references: [scheduleVersionId, activityId], onDelete: Cascade)
+  successor scheduleVersionActivity @relation("VersionDependencySuccessor", fields: [scheduleVersionId, successorActivityId], references: [scheduleVersionId, activityId], onDelete: Cascade)
+
+  @@unique([scheduleVersionId, predecessorActivityId, successorActivityId, dependencyType])
+  @@index([scheduleVersionId, predecessorActivityId])
+  @@index([scheduleVersionId, successorActivityId])
 }
 
 model scheduleVersionActivity {
@@ -129,8 +204,12 @@ model scheduleVersionActivity {
   predecessorId     String?
   fieldKeywords     String?
   normalizedSearchText String
+  wbsNodeId         String?
 
   scheduleVersion scheduleVersion @relation(fields: [scheduleVersionId], references: [scheduleVersionId], onDelete: Cascade)
+  wbsNode         wbsNode?        @relation(fields: [wbsNodeId], references: [wbsNodeId], onDelete: SetNull)
+  outgoingDependencies scheduleVersionDependency[] @relation("VersionDependencyPredecessor")
+  incomingDependencies scheduleVersionDependency[] @relation("VersionDependencySuccessor")
 
   @@id([scheduleVersionId, activityId])
   @@index([activityId])
