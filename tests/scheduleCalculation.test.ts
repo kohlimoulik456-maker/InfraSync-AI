@@ -120,3 +120,26 @@ test("not-started overdue activities are forecast no earlier than the data date"
   assert.equal(result.activities[0].earlyStart, "2026-10-01");
   assert.equal(result.activities[0].earlyFinish, "2026-10-02");
 });
+
+test("activities reported complete without an actual finish are pinned to the data date", () => {
+  const result = calculateCpm([
+    { ...activity("A", "2026-11-02", "2026-11-20", 15), activityStatus: "COMPLETED", progressValue: 100 },
+    activity("B", "2026-11-23", "2026-11-24", 2)
+  ], [dependency("FINISH_TO_START")], { dataDate: "2026-09-28" });
+
+  const completed = result.activities.find((row) => row.activityId === "A");
+  assert.equal(completed?.earlyStart, "2026-09-28");
+  assert.equal(completed?.earlyFinish, "2026-09-28");
+  assert.equal(completed?.remainingDurationWorkdays, 0);
+  assert.equal(result.forecastFinish, "2026-11-24");
+  assert.equal(result.finishVarianceWorkdays, 0);
+});
+
+test("contradictory actual dates still fail validation", () => {
+  assert.throws(() => calculateCpm([{
+    ...activity("A", "2026-09-28", "2026-09-29", 2),
+    activityStatus: "COMPLETED",
+    actualStart: "2026-10-02",
+    actualFinish: "2026-09-30"
+  }], [], { dataDate: "2026-10-05" }), /finishes before it starts/);
+});

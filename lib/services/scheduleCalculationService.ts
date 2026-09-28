@@ -196,8 +196,11 @@ export function calculateCpm(
     const isComplete = activity.activityStatus === "COMPLETED" || actualFinish !== undefined || progress === 100;
 
     if (isComplete) {
-      const fixedStart = actualStart ?? start;
-      const fixedFinish = actualFinish ?? finish;
+      // A missing actual finish means only "done by now", so pin to the data
+      // date; the planned finish may still be in the future and would inflate
+      // forecastFinish, which takes the max over every early finish.
+      const fixedFinish = actualFinish ?? dataDate;
+      const fixedStart = actualStart ?? Math.min(start, fixedFinish);
       if (fixedFinish < fixedStart) throw new Error(`Activity "${activityId}" finishes before it starts.`);
       duration.set(activityId, 0);
       completedDates.set(activityId, { start: fixedStart, finish: fixedFinish });
