@@ -17,7 +17,7 @@ test("finish-to-start schedules after the predecessor and skips Sunday", () => {
   const result = calculateCpm([
     activity("A", "2026-10-03", "2026-10-05", 2),
     activity("B", "2026-10-03", "2026-10-06", 1)
-  ], [dependency("FINISH_TO_START")]);
+  ], [dependency("FINISH_TO_START")], { dataDate: "2026-09-28" });
 
   assert.equal(result.activities.find((row) => row.activityId === "A")?.earlyFinish, "2026-10-05");
   assert.equal(result.activities.find((row) => row.activityId === "B")?.earlyStart, "2026-10-06");
@@ -29,7 +29,7 @@ test("supports start and finish relationship types with workday lags", () => {
     activity("A", "2026-09-28", "2026-09-29", 2),
     activity("B", "2026-09-28", "2026-10-02", 1)
   ];
-  const earlyStartFor = (link: CpmDependencyInput) => calculateCpm(activities, [link]).activities
+  const earlyStartFor = (link: CpmDependencyInput) => calculateCpm(activities, [link], { dataDate: "2026-09-28" }).activities
     .find((row) => row.activityId === "B")?.earlyStart;
 
   assert.equal(earlyStartFor(dependency("FINISH_TO_START")), "2026-09-30");
@@ -43,7 +43,7 @@ test("calculates zero-float critical activities against the baseline finish targ
   const result = calculateCpm([
     activity("A", "2026-09-28", "2026-09-29", 2),
     activity("B", "2026-09-29", "2026-09-30", 1)
-  ], [dependency("FINISH_TO_START")]);
+  ], [dependency("FINISH_TO_START")], { dataDate: "2026-09-28" });
 
   assert.equal(result.forecastFinish, "2026-09-30");
   assert.equal(result.targetFinish, "2026-09-30");
@@ -56,7 +56,7 @@ test("reports negative float when the network misses its baseline finish target"
   const result = calculateCpm([
     activity("A", "2026-09-28", "2026-09-29", 3),
     activity("B", "2026-09-28", "2026-09-30", 1)
-  ], [dependency("FINISH_TO_START")]);
+  ], [dependency("FINISH_TO_START")], { dataDate: "2026-09-28" });
 
   assert.equal(result.forecastFinish, "2026-10-01");
   assert.equal(result.targetFinish, "2026-09-30");
@@ -69,8 +69,54 @@ test("rejects cycles and dependencies that refer outside the schedule version", 
   assert.throws(() => calculateCpm(activities, [
     dependency("FINISH_TO_START"),
     { predecessorActivityId: "B", successorActivityId: "A", dependencyType: "FINISH_TO_START", lagDays: 0 }
-  ]), /cycle/);
+  ], { dataDate: "2026-09-28" }), /cycle/);
   assert.throws(() => calculateCpm(activities, [
     { predecessorActivityId: "MISSING", successorActivityId: "B", dependencyType: "FINISH_TO_START", lagDays: 0 }
-  ]), /connect two different activities/);
+  ], { dataDate: "2026-09-28" }), /connect two different activities/);
+});
+
+test("completed activities remain fixed to verified actual dates", () => {
+  const result = calculateCpm([
+    {
+      ...activity("A", "2026-09-28", "2026-09-29", 2),
+      activityStatus: "COMPLETED",
+      progressValue: 100,
+      actualStart: "2026-09-28",
+      actualFinish: "2026-10-02"
+    },
+    activity("B", "2026-09-28", "2026-10-05", 1)
+  ], [dependency("FINISH_TO_START")], { dataDate: "2026-10-05" });
+
+  const completed = result.activities.find((row) => row.activityId === "A");
+  const successor = result.activities.find((row) => row.activityId === "B");
+  assert.equal(completed?.earlyStart, "2026-09-28");
+  assert.equal(completed?.earlyFinish, "2026-10-02");
+  assert.equal(completed?.remainingDurationWorkdays, 0);
+  assert.equal(completed?.isCritical, false);
+  assert.equal(successor?.earlyStart, "2026-10-05");
+});
+
+test("in-progress remaining duration uses verified progress and the data date", () => {
+  const result = calculateCpm([{
+    ...activity("A", "2026-09-28", "2026-10-08", 6),
+    activityStatus: "IN_PROGRESS",
+    progressValue: 50,
+    actualStart: "2026-09-28"
+  }], [], { dataDate: "2026-10-01" });
+  const forecast = result.activities[0];
+
+  assert.equal(result.dataDate, "2026-10-01");
+  assert.equal(forecast.durationWorkdays, 6);
+  assert.equal(forecast.remainingDurationWorkdays, 3);
+  assert.equal(forecast.earlyStart, "2026-10-01");
+  assert.equal(forecast.earlyFinish, "2026-10-03");
+});
+
+test("not-started overdue activities are forecast no earlier than the data date", () => {
+  const result = calculateCpm([
+    activity("A", "2026-09-01", "2026-09-02", 2)
+  ], [], { dataDate: "2026-10-01" });
+
+  assert.equal(result.activities[0].earlyStart, "2026-10-01");
+  assert.equal(result.activities[0].earlyFinish, "2026-10-02");
 });

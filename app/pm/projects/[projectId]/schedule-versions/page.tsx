@@ -23,6 +23,7 @@ interface ScheduleVersion {
 
 interface ForecastResult {
   calendar: "MON_SAT";
+  dataDate: string;
   targetFinish: string;
   forecastFinish: string;
   finishVarianceWorkdays: number;
@@ -33,6 +34,9 @@ interface ForecastResult {
     baselineStart: string;
     baselineFinish: string;
     durationWorkdays: number;
+    remainingDurationWorkdays: number;
+    progressValue: number | null;
+    activityStatus: string;
     earlyStart: string;
     earlyFinish: string;
     lateStart: string;
@@ -179,7 +183,7 @@ export default function ScheduleVersionsPage() {
           <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
             <div>
               <h2 className="text-sm font-semibold text-navy-900">CPM Forecast · Version {forecast.versionNumber}</h2>
-              <p className="mt-1 text-xs text-slate-500">Mon–Sat, 8 hours/day · workday durations and lags · baseline unchanged · excludes actual progress, holidays, and resource limits</p>
+              <p className="mt-1 text-xs text-slate-500">As of {formatDate(forecast.result.dataDate)} · Mon–Sat, 8 hours/day · in-progress remaining duration estimated from verified progress · baseline unchanged · excludes holidays and resource limits</p>
             </div>
             <span className="inline-flex items-center gap-1 text-xs text-slate-500"><Activity size={14} /> {forecast.result.criticalActivityCount} critical activities</span>
           </div>
@@ -193,11 +197,12 @@ export default function ScheduleVersionsPage() {
             {forecast.result.criticalActivityCount === 0 ? <p className="p-5 text-sm text-slate-500">No activities are critical against the baseline finish target.</p> : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 text-slate-500"><tr><th className="px-4 py-2">Activity</th><th className="px-4 py-2">Baseline</th><th className="px-4 py-2">Early dates</th><th className="px-4 py-2">Late dates</th><th className="px-4 py-2 text-right">Float</th></tr></thead>
+                  <thead className="bg-slate-50 text-slate-500"><tr><th className="px-4 py-2">Activity</th><th className="px-4 py-2">Status / progress</th><th className="px-4 py-2">Baseline</th><th className="px-4 py-2">Early dates</th><th className="px-4 py-2">Late dates</th><th className="px-4 py-2 text-right">Float</th></tr></thead>
                   <tbody className="divide-y divide-slate-100">
                     {forecast.result.activities.filter((activity) => activity.isCritical).map((activity) => (
                       <tr key={activity.activityId}>
                         <td className="px-4 py-2"><span className="font-medium text-navy-900">{activity.activityName}</span><span className="ml-2 font-mono text-[10px] text-slate-400">{activity.activityId}</span></td>
+                        <td className="whitespace-nowrap px-4 py-2 text-slate-600">{activity.activityStatus}{activity.progressValue != null ? ` · ${activity.progressValue}%` : ""}<br /><span className="text-[10px] text-slate-400">{activity.remainingDurationWorkdays} workdays remaining</span></td>
                         <td className="whitespace-nowrap px-4 py-2 text-slate-600">{formatDate(activity.baselineStart)} – {formatDate(activity.baselineFinish)}</td>
                         <td className="whitespace-nowrap px-4 py-2 text-slate-600">{formatDate(activity.earlyStart)} – {formatDate(activity.earlyFinish)}</td>
                         <td className="whitespace-nowrap px-4 py-2 text-slate-600">{formatDate(activity.lateStart)} – {formatDate(activity.lateFinish)}</td>
